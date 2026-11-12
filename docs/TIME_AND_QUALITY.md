@@ -1,14 +1,20 @@
-# 时间与数据质量
+# 时间戳和数据质量
 
-机器狗关机后，Jetson 内核可能先从 `rtc1` 读到 1970 年；本系统的 `nx-clock-bootstrap.service` 会优先读取带后备电源的 `rtc0`，再由 chrony/NTP 校准。`nx-clock-seed.timer` 只在 chrony 已同步时保存最近可信时间并回写 `rtc0`。没有可用 RTC/NTP/NX 时间源时，选项 4 和起采都应报告时间未同步，而不是生成看似正常的时间戳。
+## 机器狗时间
 
-软件触发联采使用两站计划起采时间，并记录两站确认与首个 UDP 包到达的主机时刻。机器狗在采集前后做 SSH 时钟快照；Windows/MATLAB 后处理据此把 radar A/B、IMU、odom 放到共同时间轴。**首包时刻是接收代理，不是实际发射时刻**；摄像头时间也不是硬件曝光边沿。跨设备绝对延迟需用共同触发测量或已知目标另行标定。
+机器狗重启后，系统可能先读到错误的 RTC。`nx-clock-bootstrap.service` 会优先读取 `rtc0`，随后由 chrony/NTP 校准；`nx-clock-seed.timer` 只在时间已经同步时保存最近一次可信时间。没有可靠时间源时，预检和采集都应报错，不会把错误时间伪装成正常数据。
 
-每次会话请检查：
+## 三端怎样对时间
 
-1. `fleet_manifest.json` 的联采状态与参与站点。
-2. 两站的 `radar_quality_summary.json`：有效帧数、期望/实际字节数、`zero_filled_bytes`、零尾和内容质量。
-3. 机器狗 `controller_imu/imu_samples.csv`、`odom_samples.csv` 的消息时间戳、覆盖区间与连续性。
-4. 相机可选；失联不能使雷达空采，但 manifest 必须记录失败。视频时间精度低于有硬件时间戳的传感器。
+软件触发联采会记录三类时刻：计划起采时间、两台 NX 的确认时间、每台 NX 收到首个 UDP 包的主机时间。机器狗在采集前后通过 SSH 保存三端时钟快照，Windows/MATLAB 后处理再用这些信息对齐雷达 A/B、IMU 和 odom。
 
-Wi‑Fi `192.168.3.x` 适合连接与功能短测。正式采集应使用机器狗到 NX1/NX2 的有线地址 `192.168.55.1/56.1`；程序会阻止这些正式地址经 Wi‑Fi 网关绕行。数据保存在各设备自己的项目 `data/sessions/`，原始数据和日志不纳入 Git。
+雷达首包时间是“NX 收到数据”的时间代理，不是雷达真正发射的边沿；相机时间也不是曝光硬件时间。要得到绝对延迟，需要共同触发线或已知目标实验进一步标定。
+
+## 每次采集后检查
+
+1. 机器狗的 `fleet_manifest.json`：确认参与的站点和联采状态。
+2. 两台 NX 的 `radar_quality_summary.json`：确认有效帧、期望/实际字节数、`zero_filled_bytes` 和质量状态。
+3. 机器狗的 `controller_imu/imu_samples.csv`、`odom_samples.csv`：检查时间戳、覆盖区间和连续性。
+4. 相机是可选设备。相机失联不应让雷达空采，但 manifest 里必须留下失败状态。
+
+Wi-Fi `192.168.3.x` 适合调试和短测；正式采集使用机器狗到 NX1/NX2 的有线地址 `192.168.55.1`、`192.168.56.1`。每台设备的数据都留在自己的 `data/sessions/`，原始文件和日志不上传 Git。
