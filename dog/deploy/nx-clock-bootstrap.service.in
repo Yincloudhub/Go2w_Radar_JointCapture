@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore and synchronize machine-dog clock before capture services
+Wants=chrony.service
+After=local-fs.target chrony.service
+Before=Go2w_velocitySerial_Autostart.service
+
+[Service]
+Type=oneshot
+ExecStart=@DOG_ROOT@/tools/sync_clock.sh
+TimeoutStartSec=90
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

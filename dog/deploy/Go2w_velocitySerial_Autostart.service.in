@@ -1,0 +1,24 @@
+[Unit]
+Description=Go2W radar, SLAM and telemetry runtime (started by remote X)
+Wants=network-online.target nx-clock-bootstrap.service
+After=network-online.target nx-clock-bootstrap.service
+StartLimitIntervalSec=180
+StartLimitBurst=4
+
+[Service]
+Type=simple
+User=@DOG_USER@
+Group=@DOG_USER@
+Environment=HOME=@DOG_HOME@
+Environment=NX_FLEET_ROOT=@DOG_ROOT@
+Environment=ROS_LOG_DIR=@DOG_ROOT@/logs/ros
+Environment=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+WorkingDirectory=@DOG_ROOT@/go2w_ws
+ExecStart=/bin/bash -lc 'source /opt/ros/foxy/setup.bash && source @DOG_ROOT@/go2w_ws/install/setup.bash && exec ros2 launch go2_experiment_bringup experiment.launch.py'
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

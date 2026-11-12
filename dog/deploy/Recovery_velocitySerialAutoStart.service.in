@@ -1,0 +1,22 @@
+[Unit]
+Description=Go2W remote X recovery controller
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@DOG_USER@
+Group=@DOG_USER@
+Environment=HOME=@DOG_HOME@
+Environment=NX_FLEET_ROOT=@DOG_ROOT@
+Environment=ROS_LOG_DIR=@DOG_ROOT@/logs/ros
+Environment=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+WorkingDirectory=@DOG_ROOT@/go2w_ws
+ExecStart=/bin/bash -lc 'source /opt/ros/foxy/setup.bash && source @DOG_ROOT@/go2w_ws/install/setup.bash && exec ros2 run go2_recovery_manager go2_recovery_manager_node'
+Restart=always
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

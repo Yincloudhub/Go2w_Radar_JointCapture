@@ -1,0 +1,8 @@
+[Unit]
+Description=Save last NTP-synchronized machine-dog time
+Wants=chrony.service
+After=chrony.service
+
+[Service]
+Type=oneshot
+ExecStart=@DOG_ROOT@/tools/save_clock_seed.sh

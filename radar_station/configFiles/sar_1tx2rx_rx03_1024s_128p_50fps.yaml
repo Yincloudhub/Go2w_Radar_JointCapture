@@ -1,0 +1,11 @@
+profile_name: sar_1tx2rx_rx03_1024s_128p_50fps
+template_config: configFiles/mmwaveconfig_1tx2rx_rx03_50f128.txt
+device: AWR2243
+rx_channels: [0, 3]
+tx_sequence: [0]
+adc_samples: 1024
+chirps_per_frame: 128
+frame_rate_hz: 50
+segment_pulses: 128
+dca_packet_delay_us: 5
+notes: Proposed RX0/RX3 proof-of-concept; verify physical antenna mapping and actual loader before InSAR use.

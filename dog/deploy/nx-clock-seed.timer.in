@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically save last NTP-synchronized machine-dog time
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=nx-clock-seed.service
+
+[Install]
+WantedBy=timers.target

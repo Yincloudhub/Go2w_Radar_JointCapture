@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "trigger_source": "stm32_dual_tdm",
+  "external_trigger_period_ms": 700,
+  "first_pair_delay_ms": 700,
+  "pulse_width_us": 1,
+  "edge_offsets_us": {
+    "A": 10,
+    "B": 1260
+  },
+  "station_roles": {
+    "radar0": "A",
+    "radar1": "B"
+  },
+  "expected_chirps_per_frame": 256,
+  "expected_rx_count": 2,
+  "expected_rx_mask": 9,
+  "expected_adc_fmt": 1,
+  "expected_adc_samples": 1200,
+  "expected_sample_rate_ksps": 10000,
+  "expected_start_freq_const": 1435384036,
+  "expected_freq_slope_const": 518,
+  "expected_chirp_period_us": 2500,
+  "expected_ramp_us": 130
+}

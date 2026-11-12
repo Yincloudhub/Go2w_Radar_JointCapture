@@ -1,0 +1,723 @@
+{
+  "controller_id": "dog_nx",
+  "output_root": "data/sessions",
+  "ssh_config": "~/.ssh/config",
+  "default_user": "radar",
+  "default_port": 22,
+  "default_key_file": "",
+  "default_remote_root": "/home/radar/pyRadar-main",
+  "password_env": "RADAR_NX_PASSWORD",
+  "sudo_password_env": "RADAR_NX_PASSWORD",
+  "pull_results": false,
+  "result_mode": "station-local-only",
+  "preflight_before_capture": true,
+  "require_complete_joint_capture": true,
+  "default_operator_profile": "joint-dual-rx03-77g",
+  "default_radar_profile": "rx03_77g_256c_650ms",
+  "stm32_trigger": {
+    "port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+    "baudrate": 115200,
+    "period_ms": 700,
+    "station_roles": {
+      "radar0": "A",
+      "radar1": "B"
+    }
+  },
+  "clock_snapshots": {
+    "enabled": true,
+    "required": false,
+    "samples": 5,
+    "max_offset_ms": 20.0,
+    "notes": [
+      "Wired dual-station capture uses authenticated four-timestamp probes; all required data integrity checks remain mandatory.",
+      "Authenticated four-timestamp probes retain measured offset and uncertainty before and after capture; abs(offset)+uncertainty must not exceed 20 ms.",
+      "20 ms is one 50 fps radar frame, not a claim of calibrated exposure/sensor timing or high-precision fusion accuracy."
+    ]
+  },
+  "controller_imu": {
+    "enabled": true,
+    "required": false,
+    "topic": "/dog_imu_raw",
+    "timeout_seconds": 6,
+    "ros_setup_scripts": [
+      "/opt/ros/foxy/setup.bash"
+    ],
+    "notes": [
+      "Capture the machine-dog local IMU topic on the controller NX.",
+      "Set required=true on the dog NX if local IMU must block the workflow when absent."
+    ],
+    "odom_topic": "/unitree/slam_mapping/odom",
+    "sport_topic": "/lf/sportmodestate",
+    "lidar_imu_topic": ""
+  },
+  "radar_profiles": {
+    "hrrp_30f128_safe": {
+      "label": "HRRP 30f128 Safe",
+      "mode": "30f128_safe",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_30f128_safe.txt",
+      "fps": 30,
+      "chirps_per_frame": 128,
+      "description": "Stable single-TX HRRP profile for longer captures. Half the 60f128 data rate.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Recommended default for 15s capture because raw payload is about 503 Mbps instead of 1007 Mbps."
+      ]
+    },
+    "hrrp_60f64_safe": {
+      "label": "HRRP 60f64 Safe",
+      "mode": "60f64_safe",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_60f64_safe.txt",
+      "fps": 60,
+      "chirps_per_frame": 64,
+      "description": "Stable high-frame-rate single-TX HRRP profile with fewer chirps/frame.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Same expected raw bytes as 30f128_safe for the same duration."
+      ]
+    },
+    "hrrp_60f128_default": {
+      "label": "HRRP 60f128 Default",
+      "mode": "60f128",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_60f128.txt",
+      "fps": 60,
+      "chirps_per_frame": 128,
+      "description": "Default single-TX HRRP profile: fastest frame rate, 128 chirps/frame.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Recommended default for current robot-dog data collection."
+      ]
+    },
+    "hrrp_30f256": {
+      "label": "HRRP 30f256",
+      "mode": "30f256",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_30f256.txt",
+      "fps": 30,
+      "chirps_per_frame": 256,
+      "description": "Single-TX HRRP profile with 256 chirps/frame.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Same chirps/second and expected raw bytes as 60f128 for the same duration."
+      ]
+    },
+    "hrrp_15f512": {
+      "label": "HRRP 15f512",
+      "mode": "15f512",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_15f512.txt",
+      "fps": 15,
+      "chirps_per_frame": 512,
+      "description": "Single-TX HRRP profile with 512 chirps/frame.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Same chirps/second and expected raw bytes as 60f128 for the same duration."
+      ]
+    },
+    "hrrp_30f128_fastwrite": {
+      "label": "HRRP 30f128 Fast Write",
+      "mode": "30f128_safe",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_30f128_safe.txt",
+      "reader_mode": "framefile2",
+      "fps": 30,
+      "chirps_per_frame": 128,
+      "description": "Experimental C++ two-thread frame/chunk writer. Keeps 30f128_safe radar timing and reduces post-capture wait.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Uses RADAR_READER_MODE=framefile2.",
+        "Capture is marked warning/failed if zero-fill ratio exceeds configured thresholds."
+      ]
+    },
+    "hrrp_50f128_fastwrite": {
+      "name": "hrrp_50f128_fastwrite",
+      "label": "HRRP 50f128 Fast Write",
+      "mode": "50f128",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_50f128_test.txt",
+      "fps": 50,
+      "chirps_per_frame": 128,
+      "description": "Validated single-TX HRRP capture profile for current recording: 50 fps, 128 chirps/frame, framefile2 writer.",
+      "notes": [
+        "TX0 only, 4 RX, 1024 ADC samples.",
+        "Use RADAR_READER_MODE=framefile2.",
+        "Validated on 2026-05-12: 12s has no zero tail and only 1440 zero-filled bytes."
+      ]
+    },
+    "interferometry-512-5fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 5 fps",
+      "mode": "interferometry-512-5fps",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_5fps.txt",
+      "fps": 5,
+      "chirps_per_frame": 512,
+      "description": "Single-TX, four-RX interferometry capture candidate; verify receiver geometry and hardware before field use.",
+      "notes": [
+        "Expected raw rate: 40 MiB/s.",
+        "Uses 128 loops over chirp indices 0..3."
+      ]
+    },
+    "interferometry-512-10fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 10 fps",
+      "mode": "interferometry-512-10fps",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_10fps.txt",
+      "fps": 10,
+      "chirps_per_frame": 512,
+      "description": "Single-TX, four-RX interferometry capture candidate; verify receiver geometry and hardware before field use.",
+      "notes": [
+        "Expected raw rate: 80 MiB/s.",
+        "Uses 128 loops over chirp indices 0..3."
+      ]
+    },
+    "interferometry-512-12fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 12 fps",
+      "mode": "interferometry-512-12fps",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_12fps.txt",
+      "fps": 12,
+      "chirps_per_frame": 512,
+      "description": "Single-TX, four-RX interferometry capture candidate; verify receiver geometry and hardware before field use.",
+      "notes": [
+        "Expected raw rate: 96 MiB/s.",
+        "Uses 128 loops over chirp indices 0..3."
+      ]
+    },
+    "interferometry-512-15fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 15 fps",
+      "mode": "interferometry-512-15fps",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_15fps.txt",
+      "fps": 15,
+      "chirps_per_frame": 512,
+      "description": "Single-TX, four-RX interferometry capture candidate; verify receiver geometry and hardware before field use.",
+      "notes": [
+        "Expected raw rate: 120 MiB/s.",
+        "Uses 128 loops over chirp indices 0..3."
+      ]
+    },
+    "hrrp_50f128_from_zip": {
+      "label": "50 fps / 128 chirp from config.zip",
+      "mode": "custom",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_50f128_from_config_zip.txt",
+      "reader_mode": "framefile2",
+      "fps": 50,
+      "chirps_per_frame": 128,
+      "description": "Only frame periodicity changed from config.zip 60f128 to 50 fps.",
+      "notes": [
+        "Use framefile2 and inspect the per-run UDP zero-fill metric."
+      ]
+    },
+    "hrrp_50f128_rx03": {
+      "label": "TX0 / RX0+RX3 / 50 fps / 128 chirp",
+      "mode": "custom",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_1tx2rx_rx03_50f128.txt",
+      "reader_mode": "framefile2",
+      "fps": 50,
+      "chirps_per_frame": 128,
+      "description": "Two-RX capture derived from uploaded RX03 60fps TXT; only frame periodicity changes to 50 fps.",
+      "notes": [
+        "channelTx=1; channelRx=9; rxChanEn=9; selected chirp0 TX0.",
+        "1024 ADC samples; 1 MiB per radar frame."
+      ]
+    },
+    "rx03_77g_256c_650ms": {
+      "label": "TX0 / RX0+RX3 / 77 GHz / 256 chirp / 650 ms",
+      "mode": "custom",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+      "reader_mode": "framefile2",
+      "fps": 1.5384615384615385,
+      "chirps_per_frame": 256,
+      "description": "77 GHz start, about 25 MHz/us slope, 1200 complex samples at 10 MSps.",
+      "notes": [
+        "TX0/RX0+RX3; two identical chirp definitions repeated 128 times due to the legacy 255-loop limit.",
+        "2,457,600 bytes per frame; 640 ms chirps and 10 ms frame idle."
+      ]
+    },
+    "rx03_77g_256c_hwtrigger_tdm": {
+      "label": "双雷达硬触发 TDM / RX0+RX3 / 256 chirp / 700 ms",
+      "mode": "custom",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_hwtrig_650ms.txt",
+      "reader_mode": "framefile2",
+      "hardware_trigger": true,
+      "fps": 1.4285714285714286,
+      "chirps_per_frame": 256,
+      "description": "STM32 A/B frame triggers 1250 us apart; NX1=A, NX2=B.",
+      "notes": [
+        "Option 4 arms both radars; option 5 starts saving and sends one finite start N to STM32 after both stations report ready.",
+        "650 ms radar frame, 700 ms external trigger period, 2500 us chirp interval."
+      ]
+    },
+    "hrrp_50f128_rx0123": {
+      "label": "TX0 / RX0+RX1+RX2+RX3 / 50 fps / 128 chirp",
+      "mode": "custom",
+      "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_1tx4rx_rx0123_50f128.txt",
+      "reader_mode": "framefile2",
+      "fps": 50,
+      "chirps_per_frame": 128,
+      "description": "Four-RX capture derived from the RX03 50 fps profile by enabling RX0, RX1, RX2 and RX3.",
+      "notes": [
+        "channelTx=1; channelRx=15; rxChanEn=15; selected chirp0 TX0.",
+        "1024 ADC samples; 2 MiB per radar frame; 104.8576 MB/s raw at 50 fps.",
+        "Near Gigabit Ethernet capacity; inspect radar_quality_summary.json for UDP loss."
+      ]
+    }
+  },
+  "operator_profiles": {
+    "field": {
+      "label": "Field",
+      "description": "Default dual-station field mode.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 3.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [],
+      "station_countdown_offsets": {},
+      "station_overrides": {},
+      "notes": [
+        "Recommended default mode.",
+        "Default radar chip profile: 60f128, TX0 only, 4 RX, 1024 ADC samples.",
+        "Default radar chip profile is HRRP 60f128: TX0 only, 4 RX, 1024 ADC samples."
+      ]
+    },
+    "sync": {
+      "label": "Sync",
+      "description": "Dual-station mode that favors simultaneous start.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 3.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 9,
+      "selected_stations": [],
+      "station_countdown_offsets": {},
+      "station_overrides": {},
+      "notes": [
+        "Take denser clock snapshots before and after capture.",
+        "Default radar chip profile is HRRP 60f128: TX0 only, 4 RX, 1024 ADC samples."
+      ]
+    },
+    "anti-interference": {
+      "label": "Anti-Interference",
+      "description": "Offset one station countdown to reduce simultaneous emission overlap.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 3.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 7,
+      "selected_stations": [],
+      "station_countdown_offsets": {
+        "radar0": 0.0,
+        "radar1": 0.35
+      },
+      "station_overrides": {},
+      "notes": [
+        "Experimental delayed-start mode."
+      ]
+    },
+    "solo-radar0": {
+      "label": "Solo radar0",
+      "description": "Run only radar0.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 1,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {},
+      "notes": [
+        "Single-station baseline mode.",
+        "Optimized: skip controller duplicate preflight; station capture still runs internal checks and sync-readiness logging."
+      ],
+      "skip_preflight": true
+    },
+    "solo-radar1": {
+      "label": "Solo radar1",
+      "description": "Run only radar1.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 1,
+      "selected_stations": [
+        "radar1"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {},
+      "notes": [
+        "Single-station baseline mode.",
+        "Optimized: skip controller duplicate preflight; station capture still runs internal checks and sync-readiness logging."
+      ],
+      "skip_preflight": true
+    },
+    "negative-chirp": {
+      "label": "Negative Chirp",
+      "description": "Keep radar0 on the default up-chirp and run radar1 with a down-chirp config.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 3.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 7,
+      "selected_stations": [
+        "radar0",
+        "radar1"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar1": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/AWR2243_mmwaveconfig_neg.txt"
+        }
+      },
+      "notes": [
+        "Experimental mode.",
+        "Requires the negative chirp config file on the radar-side NX."
+      ]
+    },
+    "fast-write": {
+      "label": "Fast Write 50f128 12s",
+      "description": "Default current capture: radar0, 50f128, 12 seconds, experimental framefile2 writer.",
+      "duration_seconds": 12.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": false,
+      "clock_snapshot_samples": 3,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_50f128_test.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": true,
+      "notes": [
+        "Current recommended default after tail tests.",
+        "Run field-preflight once after wiring/power changes.",
+        "Watch RADAR_RECORDING_STARTED and RADAR_RAW_READY in terminal."
+      ]
+    },
+    "joint-current": {
+      "label": "Joint 60f128 with robot telemetry",
+      "description": "Match the 2026-10-14 radar NX profile; require robot IMU, odometry, sport state and lidar IMU.",
+      "duration_seconds": 5,
+      "countdown_seconds": 1,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_60f128.txt"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Radar-side serial IMU is optional and is never replaced under the same source name.",
+        "Raw radar stays on radar NX. Robot telemetry stays on controller with matching capture_id.",
+        "Preserve native message clocks and validity flags; software synchronization only."
+      ]
+    },
+    "interferometry-512-5fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 5 fps",
+      "description": "One-second joint hardware trial for a 512-chirp radar frame.",
+      "duration_seconds": 1.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": false,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_5fps.txt"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Experimental until a short radar+camera capture passes size and content checks."
+      ]
+    },
+    "interferometry-512-10fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 10 fps",
+      "description": "One-second joint hardware trial for a 512-chirp radar frame.",
+      "duration_seconds": 1.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": false,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_10fps.txt"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Experimental until a short radar+camera capture passes size and content checks."
+      ]
+    },
+    "interferometry-512-12fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 12 fps",
+      "description": "One-second joint hardware trial for a 512-chirp radar frame.",
+      "duration_seconds": 1.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": false,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_12fps.txt"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Experimental until a short radar+camera capture passes size and content checks."
+      ]
+    },
+    "interferometry-512-15fps": {
+      "label": "干涉用配置 512 chirp / 1024 点 / 15 fps",
+      "description": "One-second joint hardware trial for a 512-chirp radar frame.",
+      "duration_seconds": 1.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": false,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_interferometry_512c_1024s_15fps.txt"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Experimental until a short radar+camera capture passes size and content checks."
+      ]
+    },
+    "joint-50f128": {
+      "label": "50 fps / 128 chirp joint capture",
+      "description": "Radar 50 fps, 128 chirps per frame with robot odometry and video timestamps.",
+      "duration_seconds": 12.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_0508_50f128_from_config_zip.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Derived from config.zip/config/mmwaveconfig_0508_60f128.txt by changing only frame periodicity to 50 fps.",
+        "15-second trial captured 750 nonempty frames without a zero tail, but reported sparse UDP zero-fill; inspect radar_quality_summary.json.",
+        "The radar-side camera is optional while its USB device is disconnected."
+      ]
+    },
+    "joint-50f128-rx03": {
+      "label": "TX0 / RX0+RX3 / 50 fps / 128 chirp joint capture",
+      "description": "Radar two-RX capture with robot odometry and both video timestamp logs.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_1tx2rx_rx03_50f128.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Continue radar and robot telemetry capture if the radar-side camera is unavailable; report the camera failure.",
+        "Check RX0/RX3 antenna wiring and radar_quality_summary.json after each capture."
+      ]
+    },
+    "joint-single-rx03-77g": {
+      "label": "NX1 radar TX0/RX0+RX3, 77 GHz, 256 chirp, 650 ms",
+      "description": "Single NX1 radar capture; camera and robot auxiliary streams are optional.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Run UI option 11 first to initialize the radar once."
+      ]
+    },
+    "joint-dual-rx03-77g": {
+      "label": "Dual radar TX0/RX0+RX3, 77 GHz, 256 chirp, 650 ms",
+      "description": "Both radar stations are required; robot and station-side auxiliary streams are optional and reported.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": true,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0",
+        "radar1"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+          "reader_mode": "framefile2"
+        },
+        "radar1": {
+          "radar_config": "/home/ysy/radar_capture_workspace/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Both radars must pass raw byte count and content quality checks.",
+        "Camera, robot IMU/odometry/video, clock threshold, and controller transfer are optional with visible warnings."
+      ]
+    },
+    "joint-50f128-rx0123": {
+      "label": "TX0 / RX0+RX1+RX2+RX3 / 50 fps / 128 chirp joint capture",
+      "description": "Radar four-RX capture with robot odometry and both video timestamp logs.",
+      "duration_seconds": 15.0,
+      "countdown_seconds": 1.0,
+      "result_mode": "station-local-only",
+      "allow_no_camera": false,
+      "allow_no_imu": true,
+      "clock_snapshot_samples": 5,
+      "selected_stations": [
+        "radar0"
+      ],
+      "station_countdown_offsets": {},
+      "station_overrides": {
+        "radar0": {
+          "radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_1tx4rx_rx0123_50f128.txt",
+          "reader_mode": "framefile2"
+        }
+      },
+      "skip_preflight": false,
+      "notes": [
+        "Complete joint capture requires external camera, controller video, valid robot IMU and odometry covering the radar window; missing or invalid data fails the session.",
+        "TX0 only; RX0/RX1/RX2/RX3; 1024 ADC samples; 128 chirps per frame; 50 fps.",
+        "Raw rate is 104.8576 MB/s; inspect radar_quality_summary.json for UDP loss."
+      ]
+    }
+  },
+  "stations": [
+    {
+      "station_id": "radar0",
+      "host": "192.168.55.1",
+      "host_candidates": [
+        "192.168.55.1"
+      ],
+      "camera_required": false,
+      "enabled": true,
+      "notes": [
+        "Configured on dog NX by set-ips at 2026-11-11 00:51:17."
+      ],
+      "password_env": "RADAR_NX_PASSWORD",
+      "sudo_password_env": "RADAR_NX_PASSWORD"
+    },
+    {
+      "station_id": "radar1",
+      "host": "192.168.56.1",
+      "host_candidates": [
+        "192.168.56.1"
+      ],
+      "user": "ysy",
+      "remote_root": "/home/ysy/radar_capture_workspace",
+      "password_env": "RADAR_NX2_PASSWORD",
+      "sudo_password_env": "RADAR_NX2_PASSWORD",
+      "camera_required": false,
+      "enabled": true,
+      "notes": [
+        "Configured on dog NX by set-ips at 2026-11-11 00:51:17."
+      ]
+    }
+  ],
+  "controller_video": {
+    "enabled": false,
+    "required": false,
+    "device": "auto",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "fourcc": "MJPG",
+    "timeout_seconds": 6,
+    "notes": [
+      "Capture robot-dog front video from ROS2 /frontvideostream during radar capture.",
+      "The saved video file is the raw topic payload stream plus a timestamp CSV for alignment."
+    ],
+    "source": "ros_topic",
+    "topic": "/frontvideostream",
+    "field": "video720p",
+    "ros_setup_scripts": [
+      "/opt/ros/foxy/setup.bash"
+    ]
+  },
+  "default_radar_config": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+  "boot_capture_settings": {
+    "dog_boot_imu_enabled": false,
+    "radar_boot_imu_enabled": false,
+    "controller_ros_video_during_capture_enabled": true,
+    "notes": [
+      "dog_boot_imu_enabled is controlled by dog-boot-imu-logger.service on the robot dog NX.",
+      "radar_boot_imu_enabled is controlled by radar-boot-imu-logger.service on the radar NX.",
+      "controller_ros_video_during_capture_enabled controls dog-side ROS topic video during radar capture, not power-on recording."
+    ]
+  },
+  "controller_data_transfer": {
+    "enabled": true,
+    "controller_host": "auto",
+    "direction": "radar_pulls_controller",
+    "notes": [
+      "Dedicated forced-command SSH key can export completed controller sessions only.",
+      "Verify capture_id and SHA256; keep local controller originals after transfer."
+    ]
+  }
+}
