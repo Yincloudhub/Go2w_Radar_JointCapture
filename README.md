@@ -1,46 +1,60 @@
-# Go2W 双雷达采集系统
+# Go2W 双雷达采集
 
-Go2W 负责发起采集并记录 ROS IMU、里程计；两台 Jetson NX 各负责一套 AWR2243 + DCA1000 的雷达原始数据。预配置后，机器狗统一启动两站录制、保存时间戳并核对原始帧质量。
+这套工程把 Go2W、NX1 和 NX2 放进同一条采集流程：机器狗负责发起采集，并记录 IMU、里程计和各端时间；每台 NX 负责一套 AWR2243 + DCA1000 雷达原始数据。雷达侧相机和串口 IMU 是可选项，雷达本身不能缺席。
 
-![双雷达与视频成像实验预览](docs/images/matlab_bp_demo.png)
+![MATLAB 回波成像示例](docs/images/matlab_bp_demo.png)
 
-> 图为用户提供的 MATLAB 实验效果预览，不代表 I/Q 字序、外参、曝光时刻或最终成像精度已完成物理标定。仓库不包含原始采集数据。
+> 图片是一次 MATLAB 实验结果，用来展示后处理效果。它不代表当前工程已经完成 I/Q 字序、外参或曝光时刻标定。仓库不放原始采集数据。
 
-| 设备 | 项目目录 | 运行数据 | 主要任务 |
-| --- | --- | --- | --- |
-| 机器狗 NX | `~/NX_radar_fleet` | `data/sessions/`、`logs/` | 控制双站，记录 `/dog_imu_raw` 与 `/unitree/slam_mapping/odom`，保存时钟快照 |
-| 雷达站 NX1 | 自选目录，例如 `~/pyRadar-main` | `data/sessions/`、`logs/` | radar0，雷达必需，相机可选 |
-| 雷达站 NX2 | 自选目录，例如 `~/radar_capture_workspace` | `data/sessions/`、`logs/` | radar1，雷达必需，相机可选 |
+## 设备分工
+
+| 设备 | 部署目录 | 负责内容 |
+| --- | --- | --- |
+| Go2W 机器狗 | `~/NX_radar_fleet` | 运行 `nxui`，远程控制雷达站，记录 `/dog_imu_raw` 和 `/unitree/slam_mapping/odom` |
+| 雷达 NX1 | 例如 `~/radar_station` | 运行 radar0，接收 DCA1000 UDP 并保存原始帧 |
+| 雷达 NX2 | 例如 `~/radar_station` | 运行 radar1，代码与 NX1 相同，只改站点配置 |
 
 ```mermaid
 flowchart LR
-    Dog[Go2W / nxui] -->|SSH 控制与时钟快照| A[NX1 / radar0]
-    Dog -->|SSH 控制与时钟快照| B[NX2 / radar1]
+    Dog[Go2W / nxui] -->|SSH、时间快照| A[NX1 / radar0]
+    Dog -->|SSH、时间快照| B[NX2 / radar1]
     A -->|DCA1000 UDP| RawA[雷达 A 原始数据]
     B -->|DCA1000 UDP| RawB[雷达 B 原始数据]
     Dog -->|ROS 话题| Telemetry[IMU + odom]
-    Telemetry -->|采后校验传输| A
-    Telemetry -->|采后校验传输| B
 ```
 
-## 当前采集配置
+## 当前默认配置
 
-默认使用**双雷达软件触发**配置：TX0、RX0/RX3、77 GHz 起始频率、约 25 MHz/μs 斜率、每 RX 每 chirp 1200 个 Complex 1x 采样点、每帧 256 chirp、650 ms 帧周期。单站每帧原始数据应为 **2,457,600 字节**。硬触发 TDM 配置保留为可选项，只有 STM32 串口及 A/B 触发线接好后才选用。详见[参数与配置](docs/RADAR_CONFIG.md)。
+默认波形是双雷达软件触发版本：TX0、RX0/RX3、77 GHz、约 25 MHz/μs、10 MSps、每 chirp 1200 个复数点、每帧 256 个 chirp、帧周期 650 ms。按这个配置，一个完整雷达帧应为 **2,457,600 字节**。
 
-## 使用顺序
+硬件触发版本也放在 `radar_station/configFiles/`，只有 STM32 和 A/B 触发线接好后才使用。
 
-1. 按[雷达站部署说明](radar_station/README.md)配置一台或两台 NX；单站测试只启用 `radar0`，双站时再启用 `radar1`，确认 DCA 网口和雷达供电。
-2. 按[机器狗部署说明](dog/README.md)配置 ROS 环境、SSH 凭据和两站 IP。正式采集使用机器狗到两台 NX 的**有线** `192.168.55.1/56.1`；`192.168.3.x` Wi‑Fi 只用于调试或明确授权的短测。
-3. 在机器狗运行 `nxui`：选项 1 设置 IP，选项 2 选雷达配置，选项 3 选模式，选项 4 预检并预配置，选项 5 开始录制。选项 4 会直接指出时间、路由、SSH、DCA 或传感器错误。
-4. 每次实验后检查三端 `data/sessions/<会话名>/` 的 manifest、原始帧大小、补零字节数及时间快照。正式数据分析以实际落盘质量报告为准。
+## 快速开始
 
-时间同步有两个层次：机器狗先由 `rtc0` 恢复时间并通过 chrony/NTP 校准；每次采集前后又测量机器狗与 NX1/NX2 的时钟偏差。雷达帧时间目前取自 NX 收到首个 UDP 包的**主机时间代理**，不是 STM32 边沿或摄像头曝光时间。详见[时间与质量说明](docs/TIME_AND_QUALITY.md)。
+1. 按 [雷达站说明](radar_station/README.md) 在 NX 上安装依赖、配置 DCA 网口和雷达波形。
+2. 按 [机器狗说明](dog/README.md) 编译 ROS 工作空间，并填写两台 NX 的地址和 SSH 凭据。
+3. 在机器狗运行 `~/NX_radar_fleet/tools/nxui`：先选雷达和模式，再做预检，最后开始采集。
+4. 采集结束后，检查三端会话目录里的 manifest、帧大小、补零字节和时间快照。
 
-## 目录与来源
+正式采集使用机器狗到 NX1/NX2 的有线网口 `192.168.55.1`、`192.168.56.1`。Wi-Fi 只适合调试和短测。
 
-- [`dog/`](dog/README.md)：机器狗控制程序、Go2W ROS 源码、服务模板、配置样例。
-- [`radar_station/`](radar_station/README.md)：NX1/NX2 共用的雷达站源码和波形配置；设备差异只在配置文件。
-- [`docs/reference/雷达参数.pptx`](docs/reference/雷达参数.pptx)：用户提供的雷达参数教程。其通用示例不等于本系统当前波形。
-- [`docs/images/matlab_bp_demo.png`](docs/images/matlab_bp_demo.png)：用户提供的实验结果图。
+## 常用入口
 
-雷达采集核心参考 [gaoweifan/pyRadar](https://github.com/gaoweifan/pyRadar)，原项目采用 MIT 许可；相关版权声明保留在 [`radar_station/LICENSE.pyRadar`](radar_station/LICENSE.pyRadar)。本仓库供内部研发，发布时必须创建为 **Private**。不得提交密码、私钥、原始 `.bin`、视频或会话日志；实际凭据仅保存在设备本地的受限环境文件中。完整复制结构见[发布与复制说明](docs/RELEASE_LAYOUT.md)。
+- 机器狗：`~/NX_radar_fleet/tools/nxui`
+- 雷达站：`~/radar_station/run_radar_station.sh`
+- 机器狗端说明：[dog/README.md](dog/README.md)
+- 雷达端说明：[radar_station/README.md](radar_station/README.md)
+- 目录复制说明：[docs/RELEASE_LAYOUT.md](docs/RELEASE_LAYOUT.md)
+
+## 参考资料
+
+- [雷达参数教程](docs/reference/雷达参数.pptx)：mmWave Studio、chirp/frame 和 DCA1000 的配置说明。
+- [MATLAB 成像示例](docs/images/matlab_bp_demo.png)：一次实际实验的结果图。
+
+## 数据和时间
+
+每台设备把代码、日志和数据放在自己的项目目录中：`data/sessions/` 保存会话，`logs/` 保存运行日志。雷达帧时间是 NX 收到首个 UDP 包时的主机时间代理，不等于实际发射边沿；机器狗会在采集前后记录三端时间快照，后处理再把雷达、IMU 和 odom 放到同一时间轴。详细约定见 [docs/TIME_AND_QUALITY.md](docs/TIME_AND_QUALITY.md)。
+
+## 代码来源和仓库边界
+
+雷达 UDP 读取部分参考 [gaoweifan/pyRadar](https://github.com/gaoweifan/pyRadar)，许可证保留在 `radar_station/LICENSE.pyRadar`。这个仓库用于内部研发，保持 **Private**。密码、私钥、原始 `.bin`、视频、会话日志和 Jetson 平台 `.so` 都不提交到 Git。
