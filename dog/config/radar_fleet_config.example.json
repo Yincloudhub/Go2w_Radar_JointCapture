@@ -611,7 +611,7 @@
           "reader_mode": "framefile2"
         },
         "radar1": {
-          "radar_config": "/home/ysy/radar_capture_workspace/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
+          "radar_config": "/home/ysy/nx_radar/legacy/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_hwtrig_650ms.txt",
           "reader_mode": "framefile2"
         }
       },
@@ -670,7 +670,7 @@
         "192.168.56.1"
       ],
       "user": "ysy",
-      "remote_root": "/home/ysy/radar_capture_workspace",
+      "remote_root": "/home/ysy/nx_radar/legacy/pyRadar-main",
       "password_env": "RADAR_NX2_PASSWORD",
       "sudo_password_env": "RADAR_NX2_PASSWORD",
       "camera_required": false,
