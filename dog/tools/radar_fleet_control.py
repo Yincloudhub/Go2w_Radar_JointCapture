@@ -1628,7 +1628,7 @@ def run_hardware_trigger_stations(
     armed: set[str] = set()
     armed_lock = threading.Lock()
     report: dict[str, Any] = {"status": "not_started", "requested_pairs": count,
-                              "period_ms": 700, "station_roles": {"radar0": "A", "radar1": "B"},
+                              "period_ms": 650, "station_roles": {"radar0": "A", "radar1": "B"},
                               "port": port, "report_path": str(report_path)}
 
     def on_status(event: dict[str, Any]) -> None:

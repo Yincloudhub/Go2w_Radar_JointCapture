@@ -339,14 +339,16 @@ def validate_summary(summary: dict[str, Any]) -> None:
                 failures.append("radar0 and radar1 must use different A/B trigger outputs")
             if not all(math.isfinite(value) for value in (a_us, b_us, chirp_us, ramp_us, period_ms, pulse_width_us)):
                 failures.append("hardware-trigger timing values must be finite")
-            elif not math.isclose(2 * (b_us - a_us), chirp_us, abs_tol=0.01):
-                failures.append("B trigger must be half a chirp period after A for TDM")
+            else:
+                separation_us = b_us - a_us
+                if not 0 < separation_us < chirp_us:
+                    failures.append("A/B trigger separation must be positive and shorter than one chirp period")
             if ramp_us >= min(b_us - a_us, chirp_us - (b_us - a_us)):
                 failures.append("A/B chirp ramps would overlap")
             if float(summary["tdm_timing"]["next_a_frame_guard_us"]) <= 0:
                 failures.append("last B chirp would overlap the next A frame")
-            if period_ms <= float(summary["frame_period_ms"]):
-                failures.append("external trigger period must exceed configured frame period")
+            if period_ms < float(summary["frame_period_ms"]):
+                failures.append("external trigger period must not be shorter than the configured frame period")
             if not 0.025 <= pulse_width_us <= 4.0:
                 failures.append("SYNC_IN pulse width is outside 0.025..4 us")
             if summary["rx_channel_mask"] != summary["rx_chan_en"]:

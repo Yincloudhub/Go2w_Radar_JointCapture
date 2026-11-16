@@ -15,7 +15,7 @@ class TriggerError(RuntimeError):
 
 
 def frame_count(duration_seconds: float, frame_period_ms: float = 650.0,
-                trigger_period_ms: float = 700.0) -> int:
+                trigger_period_ms: float = 650.0) -> int:
     import math
     if not math.isfinite(duration_seconds) or duration_seconds <= 0:
         raise TriggerError("Capture duration must be positive and finite.")

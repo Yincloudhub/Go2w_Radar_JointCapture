@@ -17,7 +17,7 @@
   "stm32_trigger": {
     "port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
     "baudrate": 115200,
-    "period_ms": 700,
+    "period_ms": 650,
     "station_roles": {
       "radar0": "A",
       "radar1": "B"
@@ -226,17 +226,17 @@
       ]
     },
     "rx03_77g_256c_hwtrigger_tdm": {
-      "label": "双雷达硬触发 TDM / RX0+RX3 / 256 chirp / 700 ms",
+      "label": "双雷达硬触发 TDM / RX0+RX3 / 256 chirp / 650 ms",
       "mode": "custom",
       "config_path": "/home/radar/pyRadar-main/configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_hwtrig_650ms.txt",
       "reader_mode": "framefile2",
       "hardware_trigger": true,
-      "fps": 1.4285714285714286,
+      "fps": 1.5384615384615385,
       "chirps_per_frame": 256,
-      "description": "STM32 A/B frame triggers 1250 us apart; NX1=A, NX2=B.",
+      "description": "STM32 A/B frame triggers 500 us apart; NX1=A, NX2=B.",
       "notes": [
         "Option 4 arms both radars; option 5 starts saving and sends one finite start N to STM32 after both stations report ready.",
-        "650 ms radar frame, 700 ms external trigger period, 2500 us chirp interval."
+        "650 ms radar frame, 650 ms external trigger period, 2500 us chirp interval."
       ]
     },
     "hrrp_50f128_rx0123": {
