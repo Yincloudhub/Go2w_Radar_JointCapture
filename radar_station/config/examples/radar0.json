@@ -31,5 +31,5 @@
   ],
   "radar_config_base": "configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_650ms.txt",
   "radar_mode": "custom",
-  "skip_network_setup": true
+  "skip_network_setup": false
 }

@@ -661,7 +661,10 @@
         "Configured on dog NX by set-ips at 2026-11-11 00:51:17."
       ],
       "password_env": "RADAR_NX_PASSWORD",
-      "sudo_password_env": "RADAR_NX_PASSWORD"
+      "sudo_password_env": "RADAR_NX_PASSWORD",
+      "release_root": "/home/radar/pyRadar-main",
+      "current_link": "current",
+      "station_config_path": "station/radar_station_config.json"
     },
     {
       "station_id": "radar1",
@@ -671,6 +674,9 @@
       ],
       "user": "ysy",
       "remote_root": "/home/ysy/nx_radar/legacy/pyRadar-main",
+      "release_root": "/home/ysy/nx_radar/legacy/pyRadar-main",
+      "current_link": "current",
+      "station_config_path": "station/radar_station_config.json",
       "password_env": "RADAR_NX2_PASSWORD",
       "sudo_password_env": "RADAR_NX2_PASSWORD",
       "camera_required": false,

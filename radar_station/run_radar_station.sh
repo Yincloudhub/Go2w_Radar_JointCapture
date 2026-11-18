@@ -56,5 +56,8 @@ export PYTHONUNBUFFERED=1
 if [[ -z "${RADAR_READY_SOCKET:-}" && -S /run/radar-ready.sock ]]; then
   export RADAR_READY_SOCKET=/run/radar-ready.sock
 fi
+if [[ "${1:-}" != "show-config" && "${1:-}" != "ready-status" ]]; then
+  "${ROOT_DIR}/tools/wait_for_clock.sh"
+fi
 cd "${ROOT_DIR}"
 exec python3 "${ROOT_DIR}/radar_station_control.py" "$@"

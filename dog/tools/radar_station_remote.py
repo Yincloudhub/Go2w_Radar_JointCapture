@@ -66,6 +66,10 @@ def parse_args() -> argparse.Namespace:
     arm.add_argument("--radar-config", default=None)
     subparsers.add_parser("ready-status")
     subparsers.add_parser("disarm")
+    subparsers.add_parser(
+        "code-info",
+        help="Read the deployed release version and verify its SHA256SUMS manifest.",
+    )
 
     preflight = subparsers.add_parser("preflight")
     add_common_override_args(preflight)
@@ -171,8 +175,33 @@ def resolve_identity_files(explicit_key_file: str, ssh_lookup: dict[str, Any]) -
 
 
 def build_remote_command(args: argparse.Namespace) -> str:
-    runner = posixpath.join(args.remote_root, "run_radar_station.sh")
-    parts = [shlex.quote(runner), args.command]
+    current_runner = posixpath.join(args.remote_root, "current", "run_radar_station.sh")
+    legacy_runner = posixpath.join(args.remote_root, "run_radar_station.sh")
+    # The release layout is preferred after the first synchronization, while the
+    # legacy root remains a safe fallback during migration.
+    runner = (
+        f"runner={shlex.quote(current_runner)}; "
+        f"if [ ! -x \"$runner\" ]; then runner={shlex.quote(legacy_runner)}; fi; "
+        "\"$runner\""
+    )
+    if args.command == "code-info":
+        root = posixpath.join(args.remote_root, "current")
+        legacy_root = args.remote_root
+        code = (
+            "import hashlib,json,os,pathlib,subprocess; "
+            f"root=pathlib.Path(os.environ.get('RADAR_CODE_ROOT',{root!r})); "
+            f"legacy=pathlib.Path({legacy_root!r}); "
+            "root = root if (root/'VERSION').exists() else legacy; "
+            "version=(root/'VERSION').read_text().strip() if (root/'VERSION').exists() else ''; "
+            "manifest=root/'SHA256SUMS'; exists=manifest.exists(); "
+            "p=subprocess.run(['sha256sum','-c',str(manifest)],cwd=str(root),capture_output=True,text=True,check=False) if exists else None; "
+            "ok=bool(p is not None and p.returncode==0); detail=((p.stdout+p.stderr).splitlines()[-1:] if p is not None else []); "
+            "manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest() if exists else ''; "
+            "print(json.dumps({'status':'ok' if version and ok else 'code_unverified','root':str(root),'version':version,'sha256sums':str(manifest) if exists else '','hash_ok':ok,'manifest_sha256':manifest_sha256,'detail':detail},ensure_ascii=False))"
+        )
+        return "python3 -c " + shlex.quote(code)
+
+    parts = [runner, args.command]
 
     if args.command in {"capture", "camera-capture"}:
         parts.extend(["--name", shlex.quote(args.name)])
@@ -217,7 +246,7 @@ def build_remote_command(args: argparse.Namespace) -> str:
 
     env_parts: list[str] = []
     if getattr(args, "reader_mode", None) not in (None, ""):
-        env_parts.append("RADAR_READER_MODE=" + shlex.quote(str(args.reader_mode)))
+        env_parts.append("export RADAR_READER_MODE=" + shlex.quote(str(args.reader_mode)) + ";")
 
     runner_cmd = " ".join(env_parts + parts)
     sudo_password = args.sudo_password or args.password
@@ -229,7 +258,7 @@ def build_remote_command(args: argparse.Namespace) -> str:
             f"printf %s\\\\n {quoted_password} | sudo -S -p '' /usr/local/sbin/nx-online-time-sync remote >/dev/null 2>&1 || true; "
             "fi; "
         )
-        return f"{time_sync_cmd}RADAR_STATION_SUDO_PASSWORD={quoted_password} {runner_cmd}"
+        return f"{time_sync_cmd}export RADAR_STATION_SUDO_PASSWORD={quoted_password}; {runner_cmd}"
     time_sync_cmd = (
         "if [ -x /usr/local/sbin/nx-online-time-sync ]; then "
         "sudo -n /usr/local/sbin/nx-online-time-sync remote >/dev/null 2>&1 || true; "

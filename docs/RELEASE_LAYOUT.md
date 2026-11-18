@@ -41,3 +41,14 @@ Git 只保留目录占位文件，不上传真实会话。密码、SSH 私钥、
 
 - 机器狗：`~/NX_radar_fleet/tools/nxui`
 - 雷达站：`~/radar_station/run_radar_station.sh`
+
+## 雷达站版本同步
+
+双雷达模式下，在机器狗 UI 选择“4. 同步代码”。NX1 是主版本源，会在其工作目录生成：
+
+```text
+releases/vYYYYMMDD_HHMMSS/
+current -> releases/vYYYYMMDD_HHMMSS
+```
+
+发布包内带有 `VERSION` 和 `SHA256SUMS`。NX2 先解包并执行 `sha256sum -c`，通过后才原子切换 `current`，最后尝试重启 `nx-radar-ui.service`。`station/`、`data/`、`logs/` 和每台设备的 `radar_station_config.json` 不会被共享包覆盖。
