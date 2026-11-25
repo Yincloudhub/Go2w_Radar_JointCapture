@@ -844,6 +844,9 @@ def normalize_config(config: dict[str, Any], config_path: Path) -> dict[str, Any
     default_port = int(config.get("default_port", 22))
     default_key_file = str(config.get("default_key_file", "")).strip()
     default_remote_root = str(config.get("default_remote_root", "/home/radar/pyRadar-main"))
+    code_layout = str(config.get("station_code_layout", "release"))
+    if code_layout not in {"release", "git"}:
+        raise RuntimeError("station_code_layout must be 'release' or 'git'.")
     password_env = str(config.get("password_env", "")).strip()
     sudo_password_env = str(config.get("sudo_password_env", "")).strip()
     pull_results = bool(config.get("pull_results", True))
@@ -885,6 +888,7 @@ def normalize_config(config: dict[str, Any], config_path: Path) -> dict[str, Any
                 "key_file": str(station_raw.get("key_file", default_key_file)).strip(),
                 "ssh_config": str(station_raw.get("ssh_config", ssh_config)).strip(),
                 "remote_root": str(station_raw.get("remote_root", default_remote_root)).strip(),
+                "code_layout": code_layout,
                 "release_root": str(station_raw.get("release_root", station_raw.get("remote_root", default_remote_root))).strip(),
                 "current_link": str(station_raw.get("current_link", "current")).strip() or "current",
                 "station_config_path": str(station_raw.get("station_config_path", "station/radar_station_config.json")).strip()
@@ -1342,6 +1346,8 @@ def build_remote_helper_command(
         command.extend(["--sudo-password", sudo_password])
     if station["remote_root"]:
         command.extend(["--remote-root", station["remote_root"]])
+    if station.get("code_layout") == "git":
+        command.extend(["--code-layout", "git"])
     if pull_to is not None:
         command.extend(["--pull-to", str(pull_to)])
 
@@ -1485,7 +1491,7 @@ def run_remote_helper(
 def check_station_code_versions(
     stations: list[dict[str, Any]], args: argparse.Namespace
 ) -> dict[str, Any]:
-    """Read release metadata only; this path never copies code automatically."""
+    """Check the version of each station's configured runtime."""
     results = run_parallel(stations, lambda station: run_remote_helper(station, args, "code-info"))
     rows: list[dict[str, Any]] = []
     for result in results:
@@ -1503,7 +1509,16 @@ def check_station_code_versions(
     verified = [row for row in rows if row["status"] == "ok" and row["hash_ok"]]
     versions = {str(row["version"]) for row in verified if row.get("version")}
     manifests = {str(row["manifest_sha256"]) for row in verified if row.get("manifest_sha256")}
-    if len(stations) <= 1:
+    if any(station.get("code_layout") == "git" for station in stations):
+        if len(verified) != len(stations):
+            status = "mismatch"
+            errors = ["无法验证雷达站 Git 工作区。请查看站点检查详情。"]
+        elif len(versions) != 1:
+            status = "mismatch"
+            errors = ["雷达站 Git 版本不同。请将各站切换到同一提交。"]
+        else:
+            status, errors = "ok", []
+    elif len(stations) <= 1:
         status = "ok" if len(verified) == len(rows) else "warning"
         errors = [] if status == "ok" else ["当前雷达站没有可验证的版本清单；多雷达采集前请先执行“同步代码”"]
     elif len(verified) != len(rows):
@@ -1614,6 +1629,16 @@ def _install_release_command(root: str, version: str, archive: str) -> str:
 
 
 def run_sync_code(args: argparse.Namespace, config: dict[str, Any], stations: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+    if any(station.get("code_layout") == "git" for station in stations):
+        report = check_station_code_versions(stations, args)
+        if report["status"] != "ok":
+            details = [
+                f"{row['station_id']} {row['version'] or row['detail']}"
+                for row in report["stations"]
+            ]
+            return 2, {"status": "error", "message": " ".join(report["errors"] + details)}
+        version = report["stations"][0]["version"]
+        return 0, {"status": "ok", "version": version, "message": f"雷达站 Git 版本一致：{version[:12]}"}
     station_map = {station["station_id"]: station for station in stations}
     if "radar0" not in station_map or "radar1" not in station_map:
         return 2, {"status": "error", "message": "同步代码需要同时选中 radar0（NX1）和 radar1（NX2）。"}
@@ -4666,7 +4691,8 @@ def run_ui_prepare(args: argparse.Namespace, config: dict[str, Any], stations: l
             )
             print(ui_style(f"代码版本：已校验（{versions}）", "green", terminal), file=terminal)
         elif code_versions.get("status") == "mismatch":
-            print(ui_style("代码版本不一致：请先执行选项 4“同步代码”", "red", terminal), file=terminal)
+            for message in code_versions.get("errors", []):
+                print(ui_style(message, "red", terminal), file=terminal)
         else:
             print(ui_style("代码版本：未完成校验（单雷达可继续，多雷达请先同步）", "orange", terminal), file=terminal)
     if preflight.get("status") != "ok":
@@ -4870,7 +4896,9 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
         print("1. 设置雷达侧 IP " + ui_style(f"（当前 IP：{host_label}）", "red", sys.stdout))
         print("2. 查看/选择雷达配置 " + ui_style(f"（当前配置：{profile['label']}）", "red", sys.stdout))
         print("3. 查看/设置采集模式 " + ui_style(f"（当前模式：{mode['label']}）", "red", sys.stdout))
-        print("4. 同步代码 " + ui_style("（多雷达的时候才需要同步代码）", "orange", sys.stdout))
+        git_layout = any(station.get("code_layout") == "git" for station in config["stations"])
+        print("4. 检查雷达站 Git 版本" if git_layout else
+              "4. 同步代码 " + ui_style("（多雷达的时候才需要同步代码）", "orange", sys.stdout))
         print("5. 采集前检查及预配置 " + ui_style(f"（当前状态：{state_label}）", "red", sys.stdout))
         print("6. 开始采集")
         print("q. 退出")
@@ -4938,7 +4966,10 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                 selection["prepared"] = False
                 selection.pop("station_sensors", None)
                 save_ui_selection(config, selection)
-                print(ui_style(f"同步完成：{result.get('version')}；NX2 服务：{result.get('target', {}).get('restart', '未知')}", "green", sys.stdout))
+                message = result["message"] if git_layout else (
+                    f"同步完成：{result.get('version')}；NX2 服务：{result.get('target', {}).get('restart', '未知')}"
+                )
+                print(ui_style(message, "green", sys.stdout))
             else:
                 print(ui_style(str(result.get("message") or "同步代码失败"), "red", sys.stdout))
             continue

@@ -1,8 +1,23 @@
 """Radar NX pulls a matching controller session using a dedicated, restricted SSH key."""
 import argparse, hashlib, json, os, shutil, subprocess, tarfile, tempfile, time
 from pathlib import Path, PurePosixPath
-STATION_CONFIG=Path(__file__).resolve().parents[1]/'radar_station_config.json'
-ROOT=Path(json.loads(STATION_CONFIG.read_text(encoding='utf-8'))['output_root'])
+STATION_CONFIG = Path(os.environ.get(
+    'RADAR_STATION_CONFIG', str(Path(__file__).resolve().parents[1] / 'radar_station_config.json')
+)).expanduser()
+
+
+def capture_root(config_path):
+    config_path = config_path.resolve()
+    config = json.loads(config_path.read_text(encoding='utf-8'))
+    output = Path(config['output_root']).expanduser()
+    if output.is_absolute():
+        return output.resolve()
+    config_dir = config_path.parent
+    workspace = config_dir.parent if config_dir.name == 'station' else config_dir
+    candidate = workspace / output
+    return (candidate if candidate.exists() else config_dir / output).resolve()
+
+
 def digest(path):
     h=hashlib.sha256()
     with path.open('rb') as f:
@@ -57,7 +72,7 @@ def alignment(directory,station):
 
 def pull(args):
     dest=Path(args.station_session).resolve()
-    if ROOT.resolve() not in dest.parents:raise ValueError('Station session outside capture root')
+    if capture_root(STATION_CONFIG) not in dest.parents:raise ValueError('Station session outside capture root')
     station=json.loads((dest/'session_manifest.json').read_text())
     if station.get('capture_id')!=args.capture_id:raise ValueError('Radar capture_id mismatch')
     final=dest/'controller_data'

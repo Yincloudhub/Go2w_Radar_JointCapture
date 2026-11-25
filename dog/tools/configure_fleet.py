@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--radar1-user", default="ysy")
     parser.add_argument("--radar0-root", default="/home/radar/pyRadar-main")
     parser.add_argument("--radar1-root", default="/home/ysy/radar_capture_workspace")
+    parser.add_argument("--station-code-layout", choices=("release", "git"), default="release")
     parser.add_argument("--output", type=Path, default=PROJECT / "tools" / "radar_fleet_config.json")
     parser.add_argument("--force", action="store_true", help="Replace an existing config")
     args = parser.parse_args()
@@ -33,10 +34,15 @@ def main() -> None:
     users = {"radar0": args.radar0_user, "radar1": args.radar1_user}
     config["output_root"] = "data/sessions"
     config["default_remote_root"] = roots["radar0"]
+    config["station_code_layout"] = args.station_code_layout
     for station in config["stations"]:
         role = station["station_id"]
         station.update(host=hosts[role], host_candidates=[hosts[role]],
                        user=users[role], remote_root=roots[role])
+        if args.station_code_layout == "git":
+            station.pop("release_root", None)
+            station.pop("current_link", None)
+            station.pop("station_config_path", None)
     for profile in config.get("radar_profiles", {}).values():
         if profile.get("config_path"):
             profile["config_path"] = station_config_path(roots["radar0"], profile["config_path"])
