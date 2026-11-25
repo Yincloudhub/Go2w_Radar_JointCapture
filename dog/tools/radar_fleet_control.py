@@ -4,6 +4,7 @@ import argparse
 import concurrent.futures
 import contextlib
 import csv
+import getpass
 import ipaddress
 import json
 import math
@@ -21,10 +22,18 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+VENDOR_DIR = REPO_ROOT.parent / "_vendor"
+if VENDOR_DIR.exists():
+    sys.path.insert(0, str(VENDOR_DIR))
+try:
+    import paramiko  # type: ignore
+except ImportError:  # pragma: no cover - only needed for the explicit sync action
+    paramiko = None
+
 from stm32_trigger import Stm32Trigger, TriggerError, frame_count as hardware_frame_count
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_HELPER = REPO_ROOT / "tools" / "radar_station_remote.py"
 CONTROLLER_IMU_HELPER = REPO_ROOT / "tools" / "controller_telemetry_capture.py"
 CONTROLLER_VIDEO_HELPER = REPO_ROOT / "tools" / "controller_video_capture.py"
@@ -253,6 +262,12 @@ def parse_args() -> argparse.Namespace:
     set_ips.add_argument("--disable-radar1", action="store_true", help="Disable radar1 for one-station operation.")
     set_ips.add_argument("--disable-radar0", action="store_true", help="Disable radar0.")
     set_ips.add_argument("--check", action="store_true", help="Ping/SSH-check enabled stations after writing config.")
+
+    sync_code = subparsers.add_parser(
+        "sync-code",
+        help="从 NX1 主版本源生成版本包，并校验后原子同步到 NX2。",
+    )
+    add_station_filter_args(sync_code)
 
     preflight = subparsers.add_parser("preflight", help="Run preflight on one or more remote stations.")
     add_station_filter_args(preflight)
@@ -829,6 +844,9 @@ def normalize_config(config: dict[str, Any], config_path: Path) -> dict[str, Any
     default_port = int(config.get("default_port", 22))
     default_key_file = str(config.get("default_key_file", "")).strip()
     default_remote_root = str(config.get("default_remote_root", "/home/radar/pyRadar-main"))
+    code_layout = str(config.get("station_code_layout", "release"))
+    if code_layout not in {"release", "git"}:
+        raise RuntimeError("station_code_layout must be 'release' or 'git'.")
     password_env = str(config.get("password_env", "")).strip()
     sudo_password_env = str(config.get("sudo_password_env", "")).strip()
     pull_results = bool(config.get("pull_results", True))
@@ -870,6 +888,11 @@ def normalize_config(config: dict[str, Any], config_path: Path) -> dict[str, Any
                 "key_file": str(station_raw.get("key_file", default_key_file)).strip(),
                 "ssh_config": str(station_raw.get("ssh_config", ssh_config)).strip(),
                 "remote_root": str(station_raw.get("remote_root", default_remote_root)).strip(),
+                "code_layout": code_layout,
+                "release_root": str(station_raw.get("release_root", station_raw.get("remote_root", default_remote_root))).strip(),
+                "current_link": str(station_raw.get("current_link", "current")).strip() or "current",
+                "station_config_path": str(station_raw.get("station_config_path", "station/radar_station_config.json")).strip()
+                or "station/radar_station_config.json",
                 "password_env": str(station_raw.get("password_env", password_env)).strip(),
                 "sudo_password_env": str(station_raw.get("sudo_password_env", sudo_password_env)).strip(),
                 "camera_required": bool(station_raw.get("camera_required", True)),
@@ -1323,6 +1346,8 @@ def build_remote_helper_command(
         command.extend(["--sudo-password", sudo_password])
     if station["remote_root"]:
         command.extend(["--remote-root", station["remote_root"]])
+    if station.get("code_layout") == "git":
+        command.extend(["--code-layout", "git"])
     if pull_to is not None:
         command.extend(["--pull-to", str(pull_to)])
 
@@ -1461,6 +1486,204 @@ def run_remote_helper(
         result["stdout_tail"] = stdout_text.splitlines()[-20:]
         result["remote_status"] = "parse_failed"
     return result
+
+
+def check_station_code_versions(
+    stations: list[dict[str, Any]], args: argparse.Namespace
+) -> dict[str, Any]:
+    """Check the version of each station's configured runtime."""
+    results = run_parallel(stations, lambda station: run_remote_helper(station, args, "code-info"))
+    rows: list[dict[str, Any]] = []
+    for result in results:
+        report = extract_remote_report(result.get("response"))
+        rows.append({
+            "station_id": result.get("station_id"),
+            "host": result.get("host"),
+            "status": report.get("status") if report else result.get("remote_status"),
+            "root": report.get("root", ""),
+            "version": report.get("version", ""),
+            "hash_ok": bool(report.get("hash_ok")),
+            "manifest_sha256": report.get("manifest_sha256", ""),
+            "detail": report.get("detail") or station_remote_issue(result),
+        })
+    verified = [row for row in rows if row["status"] == "ok" and row["hash_ok"]]
+    versions = {str(row["version"]) for row in verified if row.get("version")}
+    manifests = {str(row["manifest_sha256"]) for row in verified if row.get("manifest_sha256")}
+    if any(station.get("code_layout") == "git" for station in stations):
+        if len(verified) != len(stations):
+            status = "mismatch"
+            errors = ["无法验证雷达站 Git 工作区。请查看站点检查详情。"]
+        elif len(versions) != 1:
+            status = "mismatch"
+            errors = ["雷达站 Git 版本不同。请将各站切换到同一提交。"]
+        else:
+            status, errors = "ok", []
+    elif len(stations) <= 1:
+        status = "ok" if len(verified) == len(rows) else "warning"
+        errors = [] if status == "ok" else ["当前雷达站没有可验证的版本清单；多雷达采集前请先执行“同步代码”"]
+    elif len(verified) != len(rows):
+        status = "mismatch"
+        errors = ["代码版本不一致：至少一个雷达站缺少 VERSION/SHA256SUMS 或校验失败"]
+    elif len(versions) != 1 or len(manifests) != 1:
+        status = "mismatch"
+        errors = ["代码版本不一致：两台 NX 的版本号或 SHA256SUMS 不一致，请先执行选项 4 同步代码"]
+    else:
+        status, errors = "ok", []
+    return {"status": status, "stations": rows, "errors": errors}
+
+
+def _direct_station_client(station: dict[str, Any]):
+    if paramiko is None:
+        raise RuntimeError("同步代码需要 paramiko，请先安装机器狗端依赖")
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_config_path = Path(str(station.get("ssh_config") or "")).expanduser()
+    lookup: dict[str, Any] = {}
+    if ssh_config_path.exists():
+        ssh_config = paramiko.SSHConfig()
+        with ssh_config_path.open("r", encoding="utf-8") as handle:
+            ssh_config.parse(handle)
+        lookup = ssh_config.lookup(station["host"])
+    kwargs: dict[str, Any] = {
+        "hostname": str(lookup.get("hostname") or station["host"]),
+        "port": int(lookup.get("port") or station.get("port") or 22),
+        "username": str(lookup.get("user") or station.get("user") or "radar"),
+        "timeout": 15,
+        "banner_timeout": 15,
+        "auth_timeout": 15,
+        "allow_agent": True,
+        "look_for_keys": True,
+    }
+    key_file = str(station.get("key_file") or "").strip()
+    identities = [key_file] if key_file else list(lookup.get("identityfile") or [])
+    if identities:
+        kwargs["key_filename"] = [str(Path(item).expanduser()) for item in identities]
+    password = resolve_secret(station.get("password_env", ""))
+    if password:
+        kwargs["password"] = password
+    client.connect(**kwargs)
+    return client
+
+
+def _ssh_exec_text(client: Any, command: str) -> tuple[int, str, str]:
+    stdin, stdout, stderr = client.exec_command(command)
+    del stdin
+    code = stdout.channel.recv_exit_status()
+    return code, stdout.read().decode("utf-8", errors="replace"), stderr.read().decode("utf-8", errors="replace")
+
+
+def _release_build_command(root: str, version: str) -> tuple[str, str]:
+    root_q, version_q = shlex.quote(root), shlex.quote(version)
+    archive = f"{root}/.fleet-release-{version}.tar.gz"
+    archive_q = shlex.quote(archive)
+    lines = [
+        "set -eu",
+        f"root={root_q}",
+        f"version={version_q}",
+        'tmp="$root/releases/.build-$version"',
+        'release="$root/releases/$version"',
+        f"archive={archive_q}",
+        'rm -rf "$tmp" "$release"',
+        'mkdir -p "$tmp" "$root/releases" "$root/station"',
+        'if [ ! -f "$root/station/radar_station_config.json" ] && [ -f "$root/radar_station_config.json" ]; then cp -p "$root/radar_station_config.json" "$root/station/radar_station_config.json"; fi',
+        "tar -C \"$root\" --exclude='./data' --exclude='./logs' --exclude='./.git' --exclude='./releases' --exclude='./current' --exclude='./station' --exclude='./radar_station_config.json' --exclude='./__pycache__' --exclude='*/__pycache__' --exclude='*.pyc' --exclude='*backup*' --exclude='*.bak' -cf - . | tar -C \"$tmp\" -xf -",
+        'rm -f "$tmp/radar_station_config.json"',
+        'ln -s ../../station/radar_station_config.json "$tmp/radar_station_config.json"',
+        'printf \'%s\\n\' "$version" > "$tmp/VERSION"',
+        '(cd "$tmp" && find . -type f ! -name VERSION ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$tmp/SHA256SUMS"',
+        'mv "$tmp" "$release"',
+        'rm -f "$root/current.next"',
+        'ln -s "releases/$version" "$root/current.next"',
+        'mv -Tf "$root/current.next" "$root/current"',
+        'tar -C "$release" -czf "$archive" .',
+        'printf \'%s\\n\' "$archive"',
+    ]
+    return "\n".join(lines), archive
+
+
+def _install_release_command(root: str, version: str, archive: str) -> str:
+    root_q, version_q, archive_q = shlex.quote(root), shlex.quote(version), shlex.quote(archive)
+    lines = [
+        "set -eu",
+        f"root={root_q}",
+        f"version={version_q}",
+        f"archive={archive_q}",
+        'mkdir -p "$root/releases" "$root/station"',
+        'if [ ! -f "$root/station/radar_station_config.json" ] && [ -f "$root/radar_station_config.json" ]; then cp -p "$root/radar_station_config.json" "$root/station/radar_station_config.json"; fi',
+        'tmp="$root/releases/.incoming-$version"',
+        'release="$root/releases/$version"',
+        'rm -rf "$tmp" "$release"',
+        'mkdir -p "$tmp"',
+        'tar -xzf "$archive" -C "$tmp"',
+        '(cd "$tmp" && sha256sum -c SHA256SUMS)',
+        'mv "$tmp" "$release"',
+        'rm -f "$root/current.next"',
+        'ln -s "releases/$version" "$root/current.next"',
+        'mv -Tf "$root/current.next" "$root/current"',
+        'rm -f "$archive"',
+        "restart='not_requested'",
+        "if systemctl --user list-unit-files nx-radar-ui.service >/dev/null 2>&1; then if systemctl --user restart nx-radar-ui.service >/dev/null 2>&1; then restart='restarted'; else restart='restart_failed'; fi; fi",
+        'printf \'%s\\n\' "$restart"',
+    ]
+    return "\n".join(lines)
+
+
+def run_sync_code(args: argparse.Namespace, config: dict[str, Any], stations: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+    if any(station.get("code_layout") == "git" for station in stations):
+        report = check_station_code_versions(stations, args)
+        if report["status"] != "ok":
+            details = [
+                f"{row['station_id']} {row['version'] or row['detail']}"
+                for row in report["stations"]
+            ]
+            return 2, {"status": "error", "message": " ".join(report["errors"] + details)}
+        version = report["stations"][0]["version"]
+        return 0, {"status": "ok", "version": version, "message": f"雷达站 Git 版本一致：{version[:12]}"}
+    station_map = {station["station_id"]: station for station in stations}
+    if "radar0" not in station_map or "radar1" not in station_map:
+        return 2, {"status": "error", "message": "同步代码需要同时选中 radar0（NX1）和 radar1（NX2）。"}
+    source, target = station_map["radar0"], station_map["radar1"]
+    version = "v" + time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    source_root = source.get("release_root") or source["remote_root"]
+    target_root = target.get("release_root") or target["remote_root"]
+    local_archive = Path(config["output_root"]).expanduser() / f".fleet-release-{version}.tar.gz"
+    local_archive.parent.mkdir(parents=True, exist_ok=True)
+    source_client = target_client = None
+    try:
+        source_client = _direct_station_client(source)
+        build_command, source_archive = _release_build_command(source_root, version)
+        code, stdout, stderr = _ssh_exec_text(source_client, build_command)
+        if code != 0:
+            return 2, {"status": "error", "message": f"NX1 生成版本包失败：{(stderr or stdout).strip()[-500:]}"}
+        with source_client.open_sftp() as sftp:
+            sftp.get(source_archive, str(local_archive))
+        _ssh_exec_text(source_client, f"rm -f {shlex.quote(source_archive)}")
+        target_client = _direct_station_client(target)
+        target_archive = f"{target_root}/.incoming/{version}.tar.gz"
+        prepare = f"mkdir -p {shlex.quote(target_root + '/.incoming')} {shlex.quote(target_root + '/releases')} {shlex.quote(target_root + '/station')}"
+        code, _, stderr = _ssh_exec_text(target_client, prepare)
+        if code != 0:
+            return 2, {"status": "error", "message": f"NX2 准备临时目录失败：{stderr.strip()[-500:]}"}
+        with target_client.open_sftp() as sftp:
+            sftp.put(str(local_archive), target_archive)
+        install_code, install_out, install_err = _ssh_exec_text(target_client, _install_release_command(target_root, version, target_archive))
+        if install_code != 0:
+            return 2, {"status": "error", "message": f"NX2 校验或切换失败：{(install_err or install_out).strip()[-700:]}"}
+        restart_status = (install_out.strip().splitlines() or ["unknown"])[-1]
+        return 0, {"status": "ok", "version": version,
+                    "source": {"station_id": "radar0", "root": source_root},
+                    "target": {"station_id": "radar1", "root": target_root, "restart": restart_status},
+                    "message": "NX1 版本包已生成，NX2 SHA256 校验通过并完成 current 原子切换。"}
+    except Exception as exc:
+        return 2, {"status": "error", "message": f"同步代码失败：{exc}"}
+    finally:
+        for client in (source_client, target_client):
+            if client is not None:
+                client.close()
+        try:
+            local_archive.unlink()
+        except OSError:
+            pass
 
 
 def check_radar_ready(stations: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
@@ -1628,7 +1851,7 @@ def run_hardware_trigger_stations(
     armed: set[str] = set()
     armed_lock = threading.Lock()
     report: dict[str, Any] = {"status": "not_started", "requested_pairs": count,
-                              "period_ms": 700, "station_roles": {"radar0": "A", "radar1": "B"},
+                              "period_ms": 650, "station_roles": {"radar0": "A", "radar1": "B"},
                               "port": port, "report_path": str(report_path)}
 
     def on_status(event: dict[str, Any]) -> None:
@@ -1725,6 +1948,16 @@ def write_text(path: Path, text: str) -> None:
         output_file.write(text)
 
 
+def save_station_password(station_id: str, password: str) -> Path:
+    """Store a station login password outside JSON, with mode 0600."""
+    path = Path.home() / (".radar_nx_password" if station_id == "radar0" else ".radar_nx2_password")
+    staged = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    staged.write_text(password.rstrip("\n") + "\n", encoding="utf-8")
+    os.chmod(staged, 0o600)
+    os.replace(staged, path)
+    return path
+
+
 def update_station_ip_config(
     config_path: Path,
     raw_config: dict[str, Any],
@@ -1764,6 +1997,21 @@ def update_station_ip_config(
         station["enabled"] = True
         station["notes"] = [f"Configured on dog NX by set-ips at {time.strftime('%Y-%m-%d %H:%M:%S')}."]
         changes.append(f"{station_id}: {old_ip or '<empty>'} -> {ip}")
+
+    for station_id in ("radar0", "radar1"):
+        station = station_map[station_id]
+        user = str(getattr(args, f"{station_id}_user", "") or "").strip()
+        password = getattr(args, f"{station_id}_password", None)
+        if user:
+            old_user = str(station.get("user", "")) or "<default>"
+            station["user"] = user
+            changes.append(f"{station_id}: user {old_user} -> {user}")
+        if password not in (None, ""):
+            env_name = "RADAR_NX_PASSWORD" if station_id == "radar0" else "RADAR_NX2_PASSWORD"
+            station["password_env"] = env_name
+            station["sudo_password_env"] = env_name
+            save_station_password(station_id, str(password))
+            changes.append(f"{station_id}: password saved to credential file")
 
     if args.disable_radar0:
         station_map["radar0"]["enabled"] = False
@@ -3349,6 +3597,7 @@ def collect_joint_preflight(config, args, stations):
             "preflight",
         ),
     )
+    code_versions = check_station_code_versions(stations, args)
     clock = {"phase": "preflight", "status": "not_run", "response": {}}
     clock_errors = []
     if config.get("require_complete_joint_capture") and (
@@ -3359,7 +3608,7 @@ def collect_joint_preflight(config, args, stations):
         clock = run_clock_snapshot(config, args, stations, "preflight")
         clock_errors = joint_clock_issues(clock, [s["station_id"] for s in stations],
                                           float(config["clock_snapshots"]["max_offset_ms"]))
-    return controller_imu_result, controller_video_result, results, clock, clock_errors
+    return controller_imu_result, controller_video_result, results, clock, clock_errors, code_versions
 
 
 def run_preflight(args: argparse.Namespace, config: dict[str, Any], stations: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
@@ -3379,12 +3628,13 @@ def run_preflight(args: argparse.Namespace, config: dict[str, Any], stations: li
         }
         return 2, payload
     stations = resolve_station_hosts(stations)
-    controller_imu_result, controller_video_result, results, clock, clock_errors = collect_joint_preflight(config, args, stations)
+    controller_imu_result, controller_video_result, results, clock, clock_errors, code_versions = collect_joint_preflight(config, args, stations)
     status = (
         "ok"
         if all(result["remote_status"] == "ok" for result in results)
         and not controller_imu_blocks_result(controller_imu_result)
         and not controller_video_blocks_result(controller_video_result)
+        and code_versions.get("status") in ("ok", "warning")
         and (not config["clock_snapshots"]["required"] or not clock_errors)
         else "preflight_failed"
     )
@@ -3392,10 +3642,12 @@ def run_preflight(args: argparse.Namespace, config: dict[str, Any], stations: li
         "status": status,
         "checked_at_local": time.strftime("%Y-%m-%d %H:%M:%S"),
         "controller_id": config["controller_id"],
+        "errors": list(code_versions.get("errors") or []),
         "controller_time_sync": controller_time_sync,
         "cross_host_clock": clock,
         "clock_errors": clock_errors,
         "clock_required": config["clock_snapshots"]["required"],
+        "code_versions": code_versions,
         "controller_imu": {
             "preflight": controller_imu_result,
         },
@@ -4191,7 +4443,7 @@ class UiCaptureProgress:
             rows = event.get("stations") or []
             sensors = event.get("station_sensors") or {}
             if not rows:
-                self.result("  雷达：已就绪" if event.get("ready") else "  雷达：有站点未就绪，请执行选项 4", "green" if event.get("ready") else "red")
+                self.result("  雷达：已就绪" if event.get("ready") else "  雷达：有站点未就绪，请执行选项 5", "green" if event.get("ready") else "red")
             for row in rows:
                 station_id = str(row["station_id"])
                 label = {"radar0": "NX1", "radar1": "NX2"}.get(station_id, station_id)
@@ -4200,7 +4452,7 @@ class UiCaptureProgress:
                 sensor = sensors.get(station_id) or {}
                 for key, name in (("camera", "相机"), ("imu", "串口 IMU")):
                     status = sensor.get(key, "unknown")
-                    state = {"ready": "选项 4 检查可用", "disabled": "未启用", "unavailable": "选项 4 未检测到"}.get(status, "状态未记录")
+                    state = {"ready": "选项 5 检查可用", "disabled": "未启用", "unavailable": "选项 5 未检测到"}.get(status, "状态未记录")
                     device = sensor.get("camera_device" if key == "camera" else "imu_port") if status == "ready" else ""
                     self.result(f"  {label} {name}：{state}" + (f"（{device}）" if device else ""),
                                 "green" if status == "ready" else "orange")
@@ -4214,7 +4466,7 @@ class UiCaptureProgress:
                 message += f"；可选设备提醒 {warnings} 项"
             self.result(message, "red" if not ok else "orange" if warnings else "green")
         elif phase == "preflight_reused":
-            self.result("  雷达侧采前检查：沿用选项 4 的结果", "green")
+            self.result("  雷达侧采前检查：沿用选项 5 的结果", "green")
         elif phase == "clock_before":
             self.line("正在记录采前时间状态…")
         elif phase == "clock_before_done":
@@ -4289,7 +4541,7 @@ def print_ui_capture_result(payload: dict[str, Any], log_path: Path, terminal: A
     ready = payload.get("radar_ready") or {}
     for item in ready.get("stations") or []:
         if not item.get("ready"):
-            print(f"  {item['station_id']}: 未就绪；请检查网络并重新执行选项 4", file=terminal)
+            print(f"  {item['station_id']}: 未就绪；请检查网络并重新执行选项 5", file=terminal)
     for station in payload.get("stations") or []:
         response = (station.get("capture") or {}).get("response") or {}
         summary = response.get("summary") or {}
@@ -4430,6 +4682,19 @@ def run_ui_prepare(args: argparse.Namespace, config: dict[str, Any], stations: l
             failed = True
             failure_reason = ui_issue_text(exc)
     clock_warnings = optional_preflight_warnings(preflight) if preflight else []
+    code_versions = preflight.get("code_versions") or {}
+    if code_versions:
+        if code_versions.get("status") == "ok":
+            versions = ", ".join(
+                f"{row.get('station_id')}={row.get('version')}"
+                for row in code_versions.get("stations") or []
+            )
+            print(ui_style(f"代码版本：已校验（{versions}）", "green", terminal), file=terminal)
+        elif code_versions.get("status") == "mismatch":
+            for message in code_versions.get("errors", []):
+                print(ui_style(message, "red", terminal), file=terminal)
+        else:
+            print(ui_style("代码版本：未完成校验（单雷达可继续，多雷达请先同步）", "orange", terminal), file=terminal)
     if preflight.get("status") != "ok":
         print(ui_style("采前检查：未通过，本次没有预配置雷达", "red", terminal), file=terminal)
         failed_station_ids = {
@@ -4489,7 +4754,7 @@ def run_ui_prepare(args: argparse.Namespace, config: dict[str, Any], stations: l
     elif preflight.get("status") == "ok":
         for issue in (ready.get("errors") or [])[:4]:
             print(ui_style(f"  {ui_issue_text(issue)}", "red", terminal), file=terminal)
-        print(ui_style("雷达尚未全部就绪，请解决上方错误后重试选项 4", "red", terminal), file=terminal)
+        print(ui_style("雷达尚未全部就绪，请解决上方错误后重试选项 5", "red", terminal), file=terminal)
     if any("clock" in str(item).lower() for item in clock_warnings):
         print(ui_style("  注意：时间同步检查不完整，跨设备对齐精度需复核", "orange", terminal), file=terminal)
     sensors = ui_station_sensor_snapshot(preflight)
@@ -4631,20 +4896,30 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
         print("1. 设置雷达侧 IP " + ui_style(f"（当前 IP：{host_label}）", "red", sys.stdout))
         print("2. 查看/选择雷达配置 " + ui_style(f"（当前配置：{profile['label']}）", "red", sys.stdout))
         print("3. 查看/设置采集模式 " + ui_style(f"（当前模式：{mode['label']}）", "red", sys.stdout))
-        print("4. 采集前检查及预配置 " + ui_style(f"（当前状态：{state_label}）", "red", sys.stdout))
-        print("5. 开始采集")
+        git_layout = any(station.get("code_layout") == "git" for station in config["stations"])
+        print("4. 检查雷达站 Git 版本" if git_layout else
+              "4. 同步代码 " + ui_style("（多雷达的时候才需要同步代码）", "orange", sys.stdout))
+        print("5. 采集前检查及预配置 " + ui_style(f"（当前状态：{state_label}）", "red", sys.stdout))
+        print("6. 开始采集")
         print("q. 退出")
         choice = input("请选择: ").strip().lower()
 
         if choice in {"q", "quit", "exit"}:
             return 0, {"status": "ok"}
         if choice == "1":
-            radar0 = input("NX1 新 IP [回车保持不变]: ").strip()
-            radar1 = input("NX2 新 IP [回车保持不变]: ").strip()
-            if not radar0 and not radar1:
-                print("IP 未更改")
+            current = {item["station_id"]: item for item in config["stations"]}
+            radar0 = input(f"NX1 IP [{current.get('radar0', {}).get('host', '未设置')}，回车保持]: ").strip()
+            radar0_user = input(f"NX1 用户名 [{current.get('radar0', {}).get('user', config.get('default_user', 'radar'))}，回车保持]: ").strip()
+            radar0_password = getpass.getpass("NX1 密码 [回车保持原密码]: ")
+            radar1 = input(f"NX2 IP [{current.get('radar1', {}).get('host', '未设置')}，回车保持]: ").strip()
+            radar1_user = input(f"NX2 用户名 [{current.get('radar1', {}).get('user', config.get('default_user', 'radar'))}，回车保持]: ").strip()
+            radar1_password = getpass.getpass("NX2 密码 [回车保持原密码]: ")
+            if not any((radar0, radar1, radar0_user, radar1_user, radar0_password, radar1_password)):
+                print("连接信息未更改")
                 continue
             change_args = clone_args(base_args, command="set-ips", radar0=radar0, radar1=radar1,
+                                     radar0_user=radar0_user, radar1_user=radar1_user,
+                                     radar0_password=radar0_password, radar1_password=radar1_password,
                                      enable_radar1=bool(radar1), disable_radar1=False, disable_radar0=False, check=True)
             path = Path(config["config_path"])
             _code, result = update_station_ip_config(path, load_config(path), change_args)
@@ -4657,6 +4932,9 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                 color = "green" if item.get("ssh_port_open") else "red"
                 status = "SSH 可连接" if item.get("ssh_port_open") else "SSH 不可连接"
                 print(ui_style(f"  {item['station_id']}: {status}", color, sys.stdout))
+            for station_id, password in (("radar0", radar0_password), ("radar1", radar1_password)):
+                if password:
+                    print(ui_style(f"  {station_id}: 密码已保存（权限 600）", "green", sys.stdout))
             continue
         if choice == "2":
             selected = ui_choose("雷达配置", config["radar_config_library"], selection["radar_profile"])
@@ -4666,7 +4944,7 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                     selection["prepared"] = False
                     selection.pop("station_sensors", None)
                     save_ui_selection(config, selection)
-                    print(ui_style("配置已选择，请执行选项 4", "orange", sys.stdout))
+                    print(ui_style("配置已选择，请执行选项 5", "orange", sys.stdout))
                 selected_profile = config["radar_config_library"][selection["radar_profile"]]
                 print(f"  NX1 文件：{selected_profile['config_path']}")
                 if "radar1" in mode["stations"]:
@@ -4680,9 +4958,22 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                 selection["prepared"] = False
                 selection.pop("station_sensors", None)
                 save_ui_selection(config, selection)
-                print(ui_style("模式已选择，请执行选项 4", "orange", sys.stdout))
+                print(ui_style("模式已选择，请执行选项 5", "orange", sys.stdout))
             continue
         if choice == "4":
+            code, result = run_sync_code(base_args, config, select_stations(config, []))
+            if code == 0:
+                selection["prepared"] = False
+                selection.pop("station_sensors", None)
+                save_ui_selection(config, selection)
+                message = result["message"] if git_layout else (
+                    f"同步完成：{result.get('version')}；NX2 服务：{result.get('target', {}).get('restart', '未知')}"
+                )
+                print(ui_style(message, "green", sys.stdout))
+            else:
+                print(ui_style(str(result.get("message") or "同步代码失败"), "red", sys.stdout))
+            continue
+        if choice == "5":
             try:
                 profile_default = float(config["operator_profiles"][mode["operator_profile"]]["duration_seconds"])
                 prepared_args, stations = build_ui_capture_args(base_args, config, selection, "ui_prepare", profile_default, False)
@@ -4695,9 +4986,9 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                 print(ui_style(f"准备失败：{exc}", "red", sys.stdout))
             save_ui_selection(config, selection)
             continue
-        if choice == "5":
+        if choice == "6":
             if not selection["prepared"]:
-                print(ui_style("请先执行选项 4，完成当前配置和模式的检查及预配置", "red", sys.stdout))
+                print(ui_style("请先执行选项 5，完成当前配置和模式的检查及预配置", "red", sys.stdout))
                 continue
             name = input("场景名称 [回车自动生成]: ").strip() or make_auto_name("scene")
             default_seconds = float(config["operator_profiles"][mode["operator_profile"]]["duration_seconds"])
@@ -4714,7 +5005,7 @@ def run_ui(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, dict[
                 selection.pop("station_sensors", None)
                 save_ui_selection(config, selection)
             continue
-        print("无效选项，请输入 1-5 或 q")
+        print("无效选项，请输入 1-6 或 q")
 
 
 
@@ -4744,6 +5035,12 @@ def main() -> int:
         "imu_baud": None,
         "station_overrides": {},
     }
+
+    if args.command == "sync-code":
+        stations = select_stations(config, args.station)
+        exit_code, payload = run_sync_code(args, config, stations)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return exit_code
 
     if args.command == "show-config":
         stations = select_stations(config, args.station)

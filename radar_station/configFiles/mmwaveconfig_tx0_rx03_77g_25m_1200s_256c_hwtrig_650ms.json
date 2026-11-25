@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "trigger_source": "stm32_dual_tdm",
-  "external_trigger_period_ms": 700,
-  "first_pair_delay_ms": 700,
+  "external_trigger_period_ms": 650,
+  "first_pair_delay_ms": 650,
   "pulse_width_us": 1,
   "edge_offsets_us": {
     "A": 10,
-    "B": 1260
+    "B": 510
   },
   "station_roles": {
     "radar0": "A",

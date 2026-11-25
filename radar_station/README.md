@@ -14,7 +14,7 @@ radar_station/
 ├── configFiles/               波形和 DCA 配置
 ├── config/                    NX1/NX2 配置样例
 ├── data/                      会话数据
-└── logs/                      运行日志
+└── logs/                       运行日志
 ```
 
 ## 部署前检查

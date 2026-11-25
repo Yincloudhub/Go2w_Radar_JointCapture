@@ -29,8 +29,8 @@
 
 配置文件：
 
-`configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_hwtrig_650ms.txt`
+`configFiles/mmwaveconfig_tx0_rx03_77g_25m_1200s_256c_hwtrig_645ms_ext650ms.txt`
 
-它使用 `triggerSelect=2`，STM32 的 A/B 触发相隔 1250 μs，触发对周期 700 ms。STM32 没有接好之前不要选这份配置。
+它使用 `triggerSelect=2`，雷达内部帧周期为 645 ms。STM32 的 A/B 触发相隔 500 μs，触发对周期为 650 ms。时序元数据保存在同名 JSON 中。
 
 原始 `.bin` 在采集端保持 DCA 字节序，NX 侧不做 I/Q 或 RX 重排。I/Q 解码和双雷达相位融合还需要用 TI 四 lane 定义和已知目标实验复核；采集质量报告不能代替相位标定报告。

@@ -13,7 +13,7 @@ def transfer_controller_session(config,stations,records,session_dir,capture_id,s
         remote_dir=(response.get('report') or {}).get('session_dir') or response.get('session_dir')
         if not remote_dir:
             results.append(dict(station_id=station['station_id'],status='error',error='No radar session path returned'));continue
-        args=Namespace(host=station['host'],user=station['user'],port=station['port'],key_file=station['key_file'],ssh_config=station['ssh_config'],password=secret_resolver(station['password_env']))
+        args=Namespace(host=station['host'],user=station['user'],port=station['port'],key_file=station['key_file'],ssh_config=station['ssh_config'],password=secret_resolver(station['password_env']),code_layout=station.get('code_layout','release'))
         controller_host=settings.get('controller_host','auto')
         if controller_host=='auto':
             try:

@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
+    parser.add_argument("--code-layout", choices=("release", "git"), default="release")
     parser.add_argument(
         "--pull-to",
         type=Path,
@@ -66,6 +67,10 @@ def parse_args() -> argparse.Namespace:
     arm.add_argument("--radar-config", default=None)
     subparsers.add_parser("ready-status")
     subparsers.add_parser("disarm")
+    subparsers.add_parser(
+        "code-info",
+        help="Verify a release manifest or the Git checkout.",
+    )
 
     preflight = subparsers.add_parser("preflight")
     add_common_override_args(preflight)
@@ -121,7 +126,11 @@ def add_camera_override_args(parser: argparse.ArgumentParser) -> None:
 
 def create_ssh_client(args: argparse.Namespace) -> paramiko.SSHClient:
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if getattr(args, "code_layout", "release") == "git":
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    else:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh_lookup = resolve_ssh_lookup(args.host, args.ssh_config)
     hostname = str(ssh_lookup.get("hostname") or args.host)
     username = str(args.user or ssh_lookup.get("user") or "radar")
@@ -171,8 +180,59 @@ def resolve_identity_files(explicit_key_file: str, ssh_lookup: dict[str, Any]) -
 
 
 def build_remote_command(args: argparse.Namespace) -> str:
-    runner = posixpath.join(args.remote_root, "run_radar_station.sh")
-    parts = [shlex.quote(runner), args.command]
+    current_runner = posixpath.join(args.remote_root, "current", "run_radar_station.sh")
+    legacy_runner = posixpath.join(args.remote_root, "run_radar_station.sh")
+    git_layout = getattr(args, "code_layout", "release") == "git"
+    # The release layout is preferred after the first synchronization, while the
+    # legacy root remains a safe fallback during migration.
+    runner = (
+        f"runner={shlex.quote(current_runner)}; "
+        f"if [ ! -x \"$runner\" ]; then runner={shlex.quote(legacy_runner)}; fi; "
+        "\"$runner\""
+    )
+    if git_layout:
+        runner = shlex.quote(legacy_runner)
+    if args.command == "code-info":
+        if git_layout:
+            code = """import json, os, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+report = {'status': 'code_unverified', 'root': str(root), 'version': '',
+          'hash_ok': False, 'manifest_sha256': ''}
+try:
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(root), *args],
+                                       text=True, stderr=subprocess.PIPE).strip()
+    commit = git('rev-parse', 'HEAD')
+    changes = git('status', '--porcelain', '--untracked-files=no', '--', '.')
+    git('ls-files', '--error-unmatch', '--', 'run_radar_station.sh')
+    if changes:
+        report['detail'] = 'Tracked radar station files have local changes.'
+    elif not os.access(root / 'run_radar_station.sh', os.X_OK):
+        report['detail'] = 'Radar station entry point is missing or not executable.'
+    else:
+        report.update(status='ok', version=commit, hash_ok=True, manifest_sha256=commit)
+except (OSError, subprocess.CalledProcessError) as exc:
+    report['detail'] = str(getattr(exc, 'stderr', None) or exc).strip()
+print(json.dumps(report))
+"""
+            return "python3 -c " + shlex.quote(code) + " " + shlex.quote(args.remote_root)
+        root = posixpath.join(args.remote_root, "current")
+        legacy_root = args.remote_root
+        code = (
+            "import hashlib,json,os,pathlib,subprocess; "
+            f"root=pathlib.Path(os.environ.get('RADAR_CODE_ROOT',{root!r})); "
+            f"legacy=pathlib.Path({legacy_root!r}); "
+            "root = root if (root/'VERSION').exists() else legacy; "
+            "version=(root/'VERSION').read_text().strip() if (root/'VERSION').exists() else ''; "
+            "manifest=root/'SHA256SUMS'; exists=manifest.exists(); "
+            "p=subprocess.run(['sha256sum','-c',str(manifest)],cwd=str(root),capture_output=True,text=True,check=False) if exists else None; "
+            "ok=bool(p is not None and p.returncode==0); detail=((p.stdout+p.stderr).splitlines()[-1:] if p is not None else []); "
+            "manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest() if exists else ''; "
+            "print(json.dumps({'status':'ok' if version and ok else 'code_unverified','root':str(root),'version':version,'sha256sums':str(manifest) if exists else '','hash_ok':ok,'manifest_sha256':manifest_sha256,'detail':detail},ensure_ascii=False))"
+        )
+        return "python3 -c " + shlex.quote(code)
+
+    parts = [runner, args.command]
 
     if args.command in {"capture", "camera-capture"}:
         parts.extend(["--name", shlex.quote(args.name)])
@@ -217,7 +277,7 @@ def build_remote_command(args: argparse.Namespace) -> str:
 
     env_parts: list[str] = []
     if getattr(args, "reader_mode", None) not in (None, ""):
-        env_parts.append("RADAR_READER_MODE=" + shlex.quote(str(args.reader_mode)))
+        env_parts.append("export RADAR_READER_MODE=" + shlex.quote(str(args.reader_mode)) + ";")
 
     runner_cmd = " ".join(env_parts + parts)
     sudo_password = args.sudo_password or args.password
@@ -229,7 +289,7 @@ def build_remote_command(args: argparse.Namespace) -> str:
             f"printf %s\\\\n {quoted_password} | sudo -S -p '' /usr/local/sbin/nx-online-time-sync remote >/dev/null 2>&1 || true; "
             "fi; "
         )
-        return f"{time_sync_cmd}RADAR_STATION_SUDO_PASSWORD={quoted_password} {runner_cmd}"
+        return f"{time_sync_cmd}export RADAR_STATION_SUDO_PASSWORD={quoted_password}; {runner_cmd}"
     time_sync_cmd = (
         "if [ -x /usr/local/sbin/nx-online-time-sync ]; then "
         "sudo -n /usr/local/sbin/nx-online-time-sync remote >/dev/null 2>&1 || true; "

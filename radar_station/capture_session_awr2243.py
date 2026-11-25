@@ -826,8 +826,13 @@ def capture_radar(
             record_event("awr2243_init_done")
         else:
             record_event("radar_config_reused")
-        require_success("AWR2243_setFrameCfg", fpga_udp.AWR2243_setFrameCfg(num_frames))
-        record_event("frame_cfg_set")
+        # In external-trigger mode, keep the radar frame counter infinite.  The
+        # STM32 pulse count is the capture boundary; writing a finite frame
+        # count here can make the radar stop before the requested trigger pairs
+        # arrive (and the framefile reader then pads the missing frames).
+        frame_cfg_count = 0 if hardware_trigger else int(num_frames)
+        require_success("AWR2243_setFrameCfg", fpga_udp.AWR2243_setFrameCfg(frame_cfg_count))
+        record_event("frame_cfg_set", configured_frame_count=frame_cfg_count)
 
         lvds_bytes_per_chirp, max_send_bytes_per_chirp, adc_params, cfg_params = DCA1000.AWR2243_read_config_compat(
             str(radar_config)
@@ -888,12 +893,16 @@ def capture_radar(
                 "framefile2_first_packet_monotonic_ns",
             )):
                 raise SessionCaptureError("The loaded fpga_udp extension lacks hardware-trigger first-packet markers.")
+            reader_timeout_seconds = max(
+                2,
+                int(expected_window_seconds(mode_summary, num_frames_out) + 5.0),
+            )
             fpga_udp.read_data_udp_frames_to_file2_async_start(
                 dca.data_socket.fileno(),
                 num_frames_out,
                 frame_bytes,
                 1466,
-                2,
+                reader_timeout_seconds,
                 str(raw_bin_path),
                 int(os.environ.get("RADAR_FRAMEFILE_CHUNK_FRAMES", "32")),
                 int(os.environ.get("RADAR_FRAMEFILE_REORDER_MARGIN_FRAMES", "2")),
@@ -1034,9 +1043,19 @@ def capture_radar(
         )
 
         if reader_mode == "framefile2":
-            require_success("AWR2243_waitSensorStop", fpga_udp.AWR2243_waitSensorStop())
-            sensor_stop_event = record_sensor_stop()
             file_reader_stats = dict(fpga_udp.read_data_udp_to_file_async_wait())
+            if hardware_trigger:
+                # An external-trigger radar is configured with frameCount=0,
+                # so AWR2243_waitSensorStop() would wait forever.  The frame
+                # reader already knows the requested frame boundary; stop the
+                # sensor only after that boundary has been written.
+                try:
+                    require_success("AWR2243_sensorStop", fpga_udp.AWR2243_sensorStop())
+                except Exception as exc:
+                    record_event("sensor_stop_warning", message=str(exc))
+            else:
+                require_success("AWR2243_waitSensorStop", fpga_udp.AWR2243_waitSensorStop())
+            sensor_stop_event = record_sensor_stop()
             record_event("udp_framefile2_async_wait_done")
             before_write_event = record_event("recording_complete_before_raw_write")
             actual_raw_bytes = int(raw_bin_path.stat().st_size) if raw_bin_path.exists() else 0

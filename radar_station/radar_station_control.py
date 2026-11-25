@@ -24,7 +24,9 @@ from capture_session_awr2243 import SessionCaptureError, detect_imu_port, prepar
 from capture_session_awr2243 import available_serial_ports, host_time_snapshot
 
 
-DEFAULT_CONFIG_PATH = ROOT / "radar_station_config.json"
+DEFAULT_CONFIG_PATH = Path(
+    os.environ.get("RADAR_STATION_CONFIG", str(ROOT / "radar_station_config.json"))
+).expanduser()
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,10 +108,23 @@ def load_station_config(config_path: Path) -> dict[str, Any]:
         config = json.load(config_file)
     if not isinstance(config, dict):
         raise SessionCaptureError(f"Station config must be a JSON object: {config_path}")
+    # Release packages keep station-specific JSON under ``station/`` while
+    # shared configs, data, and logs remain at the release root. Resolve
+    # relative paths from that root so moving the station file does not break
+    # ``configFiles/...`` or ``data/...`` references.
+    config_dir = config_path.parent
+    workspace_root = config_dir.parent if config_dir.name == "station" else config_dir
     for key in ("output_root", "radar_config", "radar_config_base", "dca_config"):
         if config.get(key):
             path = Path(str(config[key])).expanduser()
-            config[key] = str((config_path.parent / path).resolve() if not path.is_absolute() else path)
+            if path.is_absolute():
+                config[key] = str(path)
+            else:
+                root_candidate = workspace_root / path
+                config_candidate = config_dir / path
+                # Prefer the release-root location, but retain compatibility
+                # with legacy configs whose files were next to the JSON.
+                config[key] = str((root_candidate if root_candidate.exists() else config_candidate).resolve())
     return config
 
 
