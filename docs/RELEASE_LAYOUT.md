@@ -16,6 +16,7 @@ git -C ~/dual-radar-fleet checkout --detach "$FLEET_REVISION"
 - 雷达站从各自的 `~/dual-radar-fleet/radar_station/run_radar_station.sh` 运行。把原站点 JSON 迁到该目录的 `radar_station_config.json`，检查 DCA 网卡、波形、数据与日志路径。需要沿用历史会话目录时，给 `output_root` 设置原有数据的绝对路径。编译 DCA1000 接收扩展，并把待机服务入口改到新目录。
 - Git 模式下，选项 4 核对各站的 Git 提交和已跟踪文件状态，采前检查也会验证版本。升级时将两台雷达切到同一提交。原来的 `current/` 和 `releases/` 供旧部署回退。
 - 机器狗连接雷达时，机器狗采集账号的 `~/.ssh/known_hosts` 保存核对过的两台雷达主机公钥。雷达回拉 IMU/odom 时，每台雷达账号的 `~/.ssh/fleet_controller_known_hosts` 保存它实际连接的机器狗地址和经核对的主机公钥。机器狗的主机私钥由本机 SSH 服务保管。回拉使用的客户端私钥留在各台雷达，授权公钥登记在机器狗账号下。
+- 机器狗在 `~/.ssh/authorized_keys` 中为雷达回拉公钥绑定带 `restrict` 的 `export_controller_session.py`。并行部署时，可在绑定的命令中为每套控制端配置传入一个 `--config`。导出入口从这些配置读取 `output_root`，根据会话名匹配唯一会话。雷达端统一使用 `export-session NAME`。
 
 迁移顺序为整理当前线上代码并记录正在使用的波形配置、并行建立 Git 检出目录、验证 SSH 和采前检查、验证静态短采及 IMU/odom 回拉，最后切换原有服务入口。旧目录可整体保留用于回退及访问历史数据。
 
